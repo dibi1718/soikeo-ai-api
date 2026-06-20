@@ -1,4 +1,4 @@
-// server.js - Soi Kèo AI Research API V4.2 Safe Expert Consensus
+// server.js - Soi Kèo AI Research API V4.3 Source Priority Gate
 // Node.js 18+
 // package.json cần có: express, cors, dotenv và "type": "module"
 
@@ -10,7 +10,7 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "3mb" }));
+app.use(express.json({ limit: "4mb" }));
 
 const PORT = process.env.PORT || 3000;
 
@@ -29,10 +29,6 @@ function fold(s = "") {
     .toLowerCase();
 }
 
-function lower(s = "") {
-  return clean(s).toLowerCase();
-}
-
 function clamp(x, a, b) {
   const n = Number(x);
   if (!Number.isFinite(n)) return a;
@@ -46,6 +42,10 @@ function containsAny(text = "", words = []) {
 
 function escapeRegExp(s = "") {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isUrl(s = "") {
+  return /^https?:\/\//i.test(clean(s));
 }
 
 function uniqByUrl(items = []) {
@@ -68,6 +68,7 @@ function domainOf(url = "") {
     return u.hostname.replace(/^www\./, "").replace(/^m\./, "");
   } catch {
     if (String(url).startsWith("tavily://")) return "tavily";
+    if (String(url).startsWith("manual-title://")) return "manual-title";
     return "unknown";
   }
 }
@@ -90,22 +91,150 @@ function normalizeTeamName(s = "") {
     .trim();
 }
 
-function teamTokens(name = "") {
-  return normalizeTeamName(name).split(" ").filter(x => x.length >= 3);
+/* =======================
+   TEAM ALIASES
+======================= */
+
+const TEAM_ALIAS_GROUPS = [
+  ["netherlands", "holland", "dutch", "ha lan", "hà lan", "loc da cam", "lốc da cam"],
+  ["sweden", "thuy dien", "thụy điển", "thuỵ điển", "thuy dien"],
+  ["poland", "ba lan"],
+  ["northern ireland", "bac ireland", "bắc ireland"],
+  ["germany", "duc", "đức"],
+  ["usa", "united states", "united states of america", "my", "mỹ", "hoa ky", "hoa kỳ"],
+  ["turkey", "turkiye", "türkiye", "tho nhi ky", "thổ nhĩ kỳ"],
+  ["bosnia", "bosnia and herzegovina", "bosnia herzegovina"],
+  ["ivory coast", "cote d ivoire", "côte d’ivoire", "bo bien nga", "bờ biển ngà"],
+  ["czech republic", "czechia", "sec", "séc"],
+  ["south korea", "korea republic", "han quoc", "hàn quốc"],
+  ["north korea", "trieu tien", "triều tiên"],
+  ["japan", "nhat ban", "nhật bản"],
+  ["china", "trung quoc", "trung quốc"],
+  ["brazil", "brasil", "braxin"],
+  ["argentina", "argentine", "ac hen ti na", "ác hen ti na"],
+  ["spain", "tay ban nha", "tây ban nha"],
+  ["france", "phap", "pháp"],
+  ["italy", "italia", "y", "ý"],
+  ["england", "anh", "tam su", "tam sư"],
+  ["portugal", "bo dao nha", "bồ đào nha"],
+  ["belgium", "bi", "bỉ"],
+  ["croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia"],
+  ["croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia"],
+  ["croatia", "hrvatska", "croatia", "croatia", "croatia", "croatia"],
+  ["morocco", "ma roc", "ma rốc"],
+  ["mexico", "mexico", "me xi co", "mê xi cô"],
+  ["canada", "canada", "ca na da"],
+  ["paraguay", "paraguay"],
+  ["uruguay", "uruguay"],
+  ["colombia", "colombia"],
+  ["chile", "chile"],
+  ["ecuador", "ecuador"],
+  ["peru", "peru"],
+  ["australia", "uc", "úc"],
+  ["new zealand", "new zealand", "tan tay lan", "tân tây lan"],
+  ["switzerland", "thuy si", "thụy sĩ", "thuỵ sĩ"],
+  ["austria", "ao", "áo"],
+  ["norway", "na uy"],
+  ["denmark", "dan mach", "đan mạch"],
+  ["finland", "phan lan", "phần lan"],
+  ["scotland", "scotland", "to cach lan", "tô cách lan"],
+  ["wales", "wales", "xu wales"],
+  ["ireland", "republic of ireland", "ireland", "ai len", "ái len"],
+  ["romania", "romania", "rumani"],
+  ["serbia", "serbia"],
+  ["slovakia", "slovakia"],
+  ["slovenia", "slovenia"],
+  ["ukraine", "ukraine"],
+  ["russia", "nga"],
+  ["greece", "hy lap", "hy lạp"],
+  ["egypt", "ai cap", "ai cập"],
+  ["senegal", "senegal"],
+  ["ghana", "ghana"],
+  ["nigeria", "nigeria"],
+  ["cameroon", "cameroon"],
+  ["algeria", "algeria"],
+  ["tunisia", "tunisia"],
+  ["qatar", "qatar"],
+  ["saudi arabia", "saudi", "arab saudi", "ả rập xê út"],
+  ["iran", "iran"],
+  ["iraq", "iraq"],
+  ["uae", "united arab emirates", "cac tieu vuong quoc a rap thong nhat"],
+  ["thailand", "thai lan", "thái lan"],
+  ["vietnam", "viet nam", "việt nam"],
+  ["indonesia", "indonesia"],
+  ["malaysia", "malaysia"],
+  ["singapore", "singapore"],
+  ["philippines", "philippines"],
+  ["haiti", "haiti"],
+  ["jamaica", "jamaica"],
+  ["panama", "panama"],
+  ["costa rica", "costa rica"]
+];
+
+function aliasSetFor(name = "") {
+  const n = normalizeTeamName(name);
+  const set = new Set();
+
+  if (n) set.add(n);
+
+  const tokens = n.split(" ").filter(x => x.length >= 3);
+  for (const tok of tokens) set.add(tok);
+
+  for (const group of TEAM_ALIAS_GROUPS) {
+    const folded = group.map(x => normalizeTeamName(x));
+    if (folded.includes(n) || folded.some(x => x && n.includes(x)) || folded.some(x => x && x.includes(n))) {
+      for (const a of folded) if (a) set.add(a);
+    }
+  }
+
+  return [...set].filter(x => x.length >= 2);
 }
 
 function textHasTeam(text = "", team = "") {
   const t = normalizeTeamName(text);
-  const full = normalizeTeamName(team);
+  const aliases = aliasSetFor(team);
 
-  if (full && t.includes(full)) return true;
+  for (const a of aliases) {
+    if (!a) continue;
+    if (a.length <= 2) {
+      const re = new RegExp(`\\b${escapeRegExp(a)}\\b`, "i");
+      if (re.test(t)) return true;
+    } else if (t.includes(a)) {
+      return true;
+    }
+  }
 
-  const toks = teamTokens(team);
-  return toks.some(tok => t.includes(tok));
+  return false;
 }
 
 function textHasBothTeams(text = "", home = "", away = "") {
   return textHasTeam(text, home) && textHasTeam(text, away);
+}
+
+function hasVsPattern(text = "") {
+  const t = fold(text);
+  return (
+    /\bvs\b/.test(t) ||
+    /\bv\b/.test(t) ||
+    t.includes(" versus ") ||
+    t.includes(" gặp ") ||
+    t.includes(" gap ") ||
+    t.includes(" đối đầu ") ||
+    t.includes(" doi dau ")
+  );
+}
+
+function opponentMismatchInTitle(title = "", home = "", away = "") {
+  const t = clean(title);
+  if (!hasVsPattern(t)) return false;
+
+  const hasHome = textHasTeam(t, home);
+  const hasAway = textHasTeam(t, away);
+
+  if (hasHome && !hasAway) return true;
+  if (hasAway && !hasHome) return true;
+
+  return false;
 }
 
 /* =======================
@@ -113,41 +242,19 @@ function textHasBothTeams(text = "", home = "", away = "") {
 ======================= */
 
 const DOMAIN_PROFILE = {
-  "bongdaplus.vn": {
-    type: "expert_main",
-    priority: 1.22,
-    label: "Bongdaplus"
-  },
-  "bongda24h.vn": {
-    type: "expert_main",
-    priority: 1.22,
-    label: "Bongda24h"
-  },
-  "thethao247.vn": {
-    type: "expert_main",
-    priority: 1.18,
-    label: "Thể Thao 247"
-  },
-  "kqbd.mobi": {
-    type: "expert_secondary",
-    priority: 1.0,
-    label: "KQBD.mobi"
-  },
-  "bongdanet.online": {
-    type: "expert_secondary",
-    priority: 0.95,
-    label: "Bongdanet"
-  },
-  "adidas-fifa.com": {
-    type: "method_secondary",
-    priority: 0.72,
-    label: "Adidas-Fifa"
-  }
+  "bongdaplus.vn": { type: "expert_main", priority: 1.25, label: "Bongdaplus" },
+  "bongda24h.vn": { type: "expert_main", priority: 1.24, label: "Bongda24h" },
+  "thethao247.vn": { type: "expert_main", priority: 1.2, label: "Thể Thao 247" },
+  "kqbd.mobi": { type: "expert_secondary", priority: 1.08, label: "KQBD.mobi" },
+  "bongdanet.online": { type: "expert_secondary", priority: 1.0, label: "Bongdanet" },
+  "adidas-fifa.com": { type: "method_secondary", priority: 0.78, label: "Adidas-Fifa" }
 };
+
+const PREFERRED_DOMAINS = Object.keys(DOMAIN_PROFILE);
 
 function domainPriority(url = "") {
   const d = domainOf(url);
-  return DOMAIN_PROFILE[d]?.priority || 0.65;
+  return DOMAIN_PROFILE[d]?.priority || 0.62;
 }
 
 function isTrustedDomain(url = "") {
@@ -155,37 +262,41 @@ function isTrustedDomain(url = "") {
 }
 
 function isKnownCategoryUrl(url = "") {
-  const p = fold(pathOf(url));
   const u = fold(url);
 
   return (
     u.includes("nhan-dinh-bong-da-tags") ||
     u.includes("nhan-dinh-bong-da-c344") ||
     u.includes("nhan-dinh-bong-da-c288") ||
-    u.includes("/nhan-dinh-bong-da") && !/\d{4}|vs|\.html/.test(u) ||
-    u.includes("/soi-keo-bong-da/") && !/\d{4}|vs|\.html/.test(u)
+    (u.includes("/nhan-dinh-bong-da") && !/\d{4}|vs|\.html/.test(u)) ||
+    (u.includes("/soi-keo-bong-da/") && !/\d{4}|vs|\.html/.test(u)) ||
+    (u.includes("/du-doan-bong-da") && !/\d{4}|vs|\.html/.test(u)) ||
+    (u.includes("/sieu-may-tinh-du-doan-bong-da") && !/\d{4}|vs|\.html/.test(u))
   );
 }
 
-function isSuperComputerUrl(url = "") {
-  const u = fold(url);
+function isSuperComputerUrl(url = "", text = "") {
+  const u = fold(`${url} ${text}`);
+
   return (
     u.includes("du-doan-bong-da") ||
     u.includes("sieu-may-tinh") ||
     u.includes("supercomputer") ||
-    u.includes("probability")
+    u.includes("probability") ||
+    u.includes("xác suất") ||
+    u.includes("xac suat")
   );
 }
 
 /* =======================
-   TEXT DETECTION
+   DETECTION
 ======================= */
 
 function detectScore(text = "") {
   const t = clean(text);
 
   const patterns = [
-    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan)[^\d]{0,45}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
+    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan|kết quả|ket qua)[^\d]{0,60}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
     /(\d{1,2})\s*[-:]\s*(\d{1,2})/
   ];
 
@@ -217,9 +328,18 @@ function scoreToLean(score = "") {
 
 function hasProbabilityText(text = "") {
   const t = fold(text);
+
   return (
     /\b\d{1,3}\s*%/.test(t) &&
-    containsAny(t, ["xác suất", "xac suat", "probability", "chance", "win probability", "tỷ lệ thắng", "ti le thang"])
+    containsAny(t, [
+      "xác suất",
+      "xac suat",
+      "probability",
+      "chance",
+      "win probability",
+      "tỷ lệ thắng",
+      "ti le thang"
+    ])
   );
 }
 
@@ -231,14 +351,14 @@ function detectOU(text = "") {
 
   const overWords = [
     "over", "over 1.5", "over 2.5", "over 3.5",
-    "tai", "no tai", "nhieu ban",
+    "tai", "tài", "mưa bàn thắng", "mua ban thang", "nhiều bàn", "nhieu ban",
     "high scoring", "goals expected", "open game", "attacking game",
     "both teams to score", "btts"
   ];
 
   const underWords = [
     "under", "under 1.5", "under 2.5", "under 3.5",
-    "xiu", "it ban",
+    "xiu", "xỉu", "it ban", "ít bàn",
     "low scoring", "tight game", "cautious", "defensive", "low block"
   ];
 
@@ -252,8 +372,6 @@ function detectOU(text = "") {
 
 function detectWinner(text = "", home = "", away = "") {
   const t = fold(text);
-  const homeNorm = normalizeTeamName(home);
-  const awayNorm = normalizeTeamName(away);
 
   let hs = 0;
   let as = 0;
@@ -266,31 +384,29 @@ function detectWinner(text = "", home = "", away = "") {
   if (scoreLean === "away") as += 2;
   if (scoreLean === "draw") ds += 2;
 
-  const homeWinPhrases = [
-    `${homeNorm} win`,
-    `${homeNorm} to win`,
-    `${homeNorm} victory`,
-    `${homeNorm} thang`,
-    `win for ${homeNorm}`,
-    `victory for ${homeNorm}`
-  ];
+  const homeAliases = aliasSetFor(home);
+  const awayAliases = aliasSetFor(away);
 
-  const awayWinPhrases = [
-    `${awayNorm} win`,
-    `${awayNorm} to win`,
-    `${awayNorm} victory`,
-    `${awayNorm} thang`,
-    `win for ${awayNorm}`,
-    `victory for ${awayNorm}`
-  ];
+  for (const h of homeAliases) {
+    if (!h) continue;
+    if (t.includes(`${h} thang`) || t.includes(`${h} thắng`) || t.includes(`${h} win`) || t.includes(`${h} to win`) || t.includes(`${h} victory`)) {
+      hs += 3;
+    }
+  }
 
-  for (const p of homeWinPhrases) if (p.trim() && t.includes(p)) hs += 3;
-  for (const p of awayWinPhrases) if (p.trim() && t.includes(p)) as += 3;
+  for (const a of awayAliases) {
+    if (!a) continue;
+    if (t.includes(`${a} thang`) || t.includes(`${a} thắng`) || t.includes(`${a} win`) || t.includes(`${a} to win`) || t.includes(`${a} victory`)) {
+      as += 3;
+    }
+  }
 
-  if (containsAny(t, ["draw", "hoa", "stalemate"])) ds += 2;
+  if (containsAny(t, ["draw", "hòa", "hoa", "stalemate", "chia điểm", "chia diem"])) ds += 2;
+  if (containsAny(t, ["chủ nhà khó thắng", "chu nha kho thang"])) as += 1;
+  if (containsAny(t, ["khách khó thắng", "khach kho thang"])) hs += 1;
 
-  if (textHasTeam(t, home) && containsAny(t, ["favorite", "favourite", "duoc danh gia cao"])) hs += 1;
-  if (textHasTeam(t, away) && containsAny(t, ["favorite", "favourite", "duoc danh gia cao"])) as += 1;
+  if (textHasTeam(t, home) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao", "cửa trên", "cua tren"])) hs += 1;
+  if (textHasTeam(t, away) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao", "cửa trên", "cua tren"])) as += 1;
 
   if (hs > as && hs > ds) return "home";
   if (as > hs && as > ds) return "away";
@@ -307,21 +423,21 @@ function detectHdc(text = "", home = "", away = "") {
 
   if (winner === "home") homeHdc += 1.2;
   if (winner === "away") awayHdc += 1.2;
-
   if (winner === "draw") {
-    homeHdc += 0.35;
-    awayHdc += 0.35;
+    homeHdc += 0.25;
+    awayHdc += 0.25;
   }
 
-  if (containsAny(t, ["handicap home", "home handicap", "chu nha", "cua tren"])) {
-    homeHdc += 1;
+  if (containsAny(t, ["handicap home", "home handicap", "chủ nhà", "chu nha", "cửa trên", "cua tren", "chấp"])) {
+    if (textHasTeam(t, home)) homeHdc += 1;
+    if (textHasTeam(t, away)) awayHdc += 1;
   }
 
-  if (containsAny(t, ["handicap away", "away handicap", "doi khach", "cua duoi"])) {
-    awayHdc += 1;
+  if (containsAny(t, ["handicap away", "away handicap", "đội khách", "doi khach"])) {
+    if (textHasTeam(t, away)) awayHdc += 1;
   }
 
-  if (containsAny(t, ["cover the spread", "cover handicap", "thang keo", "an keo"])) {
+  if (containsAny(t, ["cover the spread", "cover handicap", "thắng kèo", "thang keo", "ăn kèo", "an keo"])) {
     if (textHasTeam(t, home)) homeHdc += 1;
     if (textHasTeam(t, away)) awayHdc += 1;
   }
@@ -335,11 +451,13 @@ function detectSourceType(url = "", text = "") {
   const blob = `${url} ${text}`;
 
   if (
-    isSuperComputerUrl(url) ||
+    isSuperComputerUrl(url, text) ||
     containsAny(blob, [
       "supercomputer",
       "sieu may tinh",
+      "siêu máy tính",
       "probability",
+      "xác suất",
       "xac suat",
       "machine learning",
       "monte carlo"
@@ -352,23 +470,26 @@ function detectSourceType(url = "", text = "") {
 }
 
 /* =======================
-   SOURCE QUALITY
+   SOURCE QUALITY V4.3
 ======================= */
 
-function qualitySource({ title = "", url = "", text = "", baseType = "auto" }, home = "", away = "") {
+function qualitySource({ title = "", url = "", text = "", manualPriority = false, fromManualTitle = false }, home = "", away = "") {
   const domain = domainOf(url);
-  const path = pathOf(url);
   const titleBlob = `${title} ${url}`;
   const all = `${title}. ${url}. ${text}`;
 
   const titleBoth = textHasBothTeams(title, home, away);
   const urlBoth = textHasBothTeams(url, home, away);
   const textBoth = textHasBothTeams(all, home, away);
-  const matchOk = textBoth;
 
-  const isCategory = isKnownCategoryUrl(url) && !titleBoth && !urlBoth;
+  const matchOk = titleBoth || urlBoth || textBoth;
   const trusted = isTrustedDomain(url);
+  const isCategory = isKnownCategoryUrl(url) && !titleBoth && !urlBoth;
   const type = detectSourceType(url, all);
+
+  const titleMismatch = opponentMismatchInTitle(title, home, away);
+  const urlMismatch = opponentMismatchInTitle(url, home, away);
+  const hardReject = titleMismatch || urlMismatch;
 
   const score = detectScore(all);
   const ou = detectOU(all);
@@ -384,75 +505,90 @@ function qualitySource({ title = "", url = "", text = "", baseType = "auto" }, h
   let q = 0;
   const flags = [];
 
-  if (matchOk) {
-    q += 22;
-    flags.push("đúng 2 đội");
+  if (hardReject) {
+    q = 0;
+    flags.push("sai cặp trong title/url, loại vote");
   } else {
-    flags.push("không xác minh đủ 2 đội");
-  }
+    if (matchOk) {
+      q += 20;
+      flags.push("đúng 2 đội");
+    } else {
+      flags.push("không xác minh đủ 2 đội");
+    }
 
-  if (titleBoth) {
-    q += 25;
-    flags.push("title đúng trận");
-  }
+    if (titleBoth) {
+      q += 28;
+      flags.push("title đúng trận");
+    }
 
-  if (urlBoth) {
-    q += 15;
-    flags.push("url đúng trận");
-  }
+    if (urlBoth) {
+      q += 16;
+      flags.push("url đúng trận");
+    }
 
-  if (trusted) {
-    q += 10;
-    flags.push(`domain ưu tiên: ${DOMAIN_PROFILE[domain]?.label || domain}`);
-  }
+    if (trusted) {
+      q += 10;
+      flags.push(`domain ưu tiên: ${DOMAIN_PROFILE[domain]?.label || domain}`);
+    }
 
-  if (hasScoreText) {
-    q += 12;
-    flags.push("có tỷ số");
-  }
+    if (manualPriority) {
+      q += 16;
+      flags.push("nguồn thủ công ưu tiên");
+    }
 
-  if (hasProb) {
-    q += 14;
-    flags.push("có xác suất");
-  }
+    if (fromManualTitle) {
+      q += 6;
+      flags.push("tìm từ tiêu đề bạn dán");
+    }
 
-  if (hasOuText) {
-    q += 10;
-    flags.push("có T/X");
-  }
+    if (hasScoreText) {
+      q += 12;
+      flags.push("có tỷ số");
+    }
 
-  if (hasHdcText) {
-    q += 10;
-    flags.push("có HDC");
-  }
+    if (hasProb) {
+      q += 14;
+      flags.push("có xác suất");
+    }
 
-  if (hasWinnerText) {
-    q += 6;
-    flags.push("có winner");
-  }
+    if (hasOuText) {
+      q += 10;
+      flags.push("có T/X");
+    }
 
-  if (type === "supercomputer") {
-    q += 6;
-    flags.push("nguồn siêu máy tính");
-  }
+    if (hasHdcText) {
+      q += 10;
+      flags.push("có HDC");
+    }
 
-  if (isCategory) {
-    q -= 28;
-    flags.push("trang chuyên mục, giảm mạnh");
-  }
+    if (hasWinnerText) {
+      q += 6;
+      flags.push("có winner");
+    }
 
-  if (domain === "tavily") {
-    q -= 20;
-    flags.push("tóm tắt Tavily, không phải bài gốc");
-  }
+    if (type === "supercomputer") {
+      q += 6;
+      flags.push("nguồn siêu máy tính");
+    }
 
-  if (!matchOk) q = Math.min(q, 20);
+    if (isCategory) {
+      q -= 30;
+      flags.push("trang chuyên mục, giảm mạnh");
+    }
 
-  const contentSignals = [hasScoreText, hasProb, hasOuText, hasHdcText, hasWinnerText].filter(Boolean).length;
+    if (domain === "tavily") {
+      q -= 24;
+      flags.push("tóm tắt Tavily, không phải bài gốc");
+    }
 
-  if (contentSignals === 0) {
-    q = Math.min(q, 35);
-    flags.push("không có tín hiệu kèo rõ");
+    if (!matchOk) q = Math.min(q, 18);
+
+    const contentSignals = [hasScoreText, hasProb, hasOuText, hasHdcText, hasWinnerText].filter(Boolean).length;
+
+    if (contentSignals === 0) {
+      q = Math.min(q, manualPriority ? 48 : 34);
+      flags.push("không có tín hiệu kèo rõ");
+    }
   }
 
   q = clamp(q, 0, 100);
@@ -462,49 +598,56 @@ function qualitySource({ title = "", url = "", text = "", baseType = "auto" }, h
   else if (q >= 55) qualityLabel = "medium";
   else if (q >= 40) qualityLabel = "weak";
 
-  const voteAllowed = matchOk && q >= 50 && !isCategory;
+  const voteAllowed =
+    !hardReject &&
+    matchOk &&
+    q >= 50 &&
+    !isCategory;
 
-  const priority = domainPriority(url);
-  const confidence = clamp(0.25 + q / 145, 0.25, 0.82);
+  const priority = domainPriority(url) * (manualPriority ? 1.18 : 1);
+  const confidence = clamp(0.22 + q / 145, 0.22, 0.84);
   const voteWeight = voteAllowed ? confidence * (q / 100) * priority : 0;
+
+  const displayEligible =
+    !hardReject &&
+    (voteAllowed || q >= 40 || manualPriority);
 
   return {
     domain,
-    path,
     trusted,
     type,
     matchOk,
     titleBoth,
     urlBoth,
     isCategory,
+    hardReject,
+    titleMismatch,
+    urlMismatch,
     quality: q,
     qualityLabel,
     voteAllowed,
     voteWeight,
+    displayEligible,
     flags,
     score,
     hasProb,
     hasOuText,
     hasHdcText,
-    hasWinnerText,
-    contentSignals
+    hasWinnerText
   };
 }
 
-/* =======================
-   PARSE EXPERT SOURCES
-======================= */
-
-function parseExpertSource({ title = "", url = "", text = "", type = "auto" }, home, away) {
+function parseExpertSource({ title = "", url = "", text = "", type = "auto", manualPriority = false, fromManualTitle = false }, home, away) {
   const blob = clean(`${title}. ${text}`);
-  const q = qualitySource({ title, url, text: blob, baseType: type }, home, away);
+  const q = qualitySource({ title, url, text: blob, manualPriority, fromManualTitle }, home, away);
 
-  const winnerLean = detectWinner(blob, home, away);
+  const winnerLean = q.voteAllowed ? detectWinner(blob, home, away) : "neutral";
   const hdcLean = q.voteAllowed ? detectHdc(blob, home, away) : "neutral";
   const ouLean = q.voteAllowed ? detectOU(blob) : "neutral";
   const score = q.voteAllowed ? detectScore(blob) : "";
 
   const note = [];
+
   if (winnerLean !== "neutral") note.push(`Winner lean: ${winnerLean}`);
   if (hdcLean !== "neutral") note.push(`HDC lean: ${hdcLean}`);
   if (ouLean !== "neutral") note.push(`OU lean: ${ouLean}`);
@@ -515,21 +658,25 @@ function parseExpertSource({ title = "", url = "", text = "", type = "auto" }, h
     url,
     domain: q.domain,
     type: q.type || type,
+    manualPriority,
+    fromManualTitle,
     quality: q.quality,
     qualityLabel: q.qualityLabel,
     voteAllowed: q.voteAllowed,
     voteWeight: q.voteWeight,
+    displayEligible: q.displayEligible,
+    hardReject: q.hardReject,
     qualityFlags: q.flags,
     matchOk: q.matchOk,
     isCategory: q.isCategory,
-    winnerLean: q.voteAllowed ? winnerLean : "neutral",
+    winnerLean,
     hdcLean,
     ouLean,
     score,
     hasProbability: q.hasProb,
     confidence: q.confidence,
     note: note.join(" · ") || "Nguồn có liên quan nhưng chưa đủ chuẩn để vote mạnh.",
-    snippet: blob.slice(0, 800)
+    snippet: blob.slice(0, 900)
   };
 }
 
@@ -537,14 +684,17 @@ function bestPerDomain(sources = []) {
   const map = new Map();
 
   for (const s of sources) {
-    if (!s || !s.url) continue;
+    if (!s || !s.url || s.hardReject) continue;
 
     const key = s.domain || domainOf(s.url);
-
     const old = map.get(key);
 
-    const oldPower = old ? (old.voteWeight || 0) + (old.quality || 0) / 200 : -1;
-    const newPower = (s.voteWeight || 0) + (s.quality || 0) / 200;
+    const oldPower = old
+      ? (old.voteWeight || 0) + (old.quality || 0) / 200 + (old.manualPriority ? 0.5 : 0)
+      : -1;
+
+    const newPower =
+      (s.voteWeight || 0) + (s.quality || 0) / 200 + (s.manualPriority ? 0.5 : 0);
 
     if (!old || newPower > oldPower) {
       map.set(key, s);
@@ -598,6 +748,25 @@ function commonScores(items = []) {
     .map(x => x[0]);
 }
 
+function sortSourcesForDisplay(all = []) {
+  return [...all]
+    .filter(s => s && s.displayEligible)
+    .sort((a, b) => {
+      const aScore =
+        (a.manualPriority ? 1000 : 0) +
+        (a.voteAllowed ? 500 : 0) +
+        (a.quality || 0);
+
+      const bScore =
+        (b.manualPriority ? 1000 : 0) +
+        (b.voteAllowed ? 500 : 0) +
+        (b.quality || 0);
+
+      return bScore - aScore;
+    })
+    .slice(0, 14);
+}
+
 function buildConsensus(items = [], home = "", away = "") {
   const all = items.filter(x => x && x.url);
   const domainBest = bestPerDomain(all);
@@ -610,6 +779,7 @@ function buildConsensus(items = [], home = "", away = "") {
 
   const strongCount = voting.filter(s => s.quality >= 72).length;
   const mediumCount = voting.filter(s => s.quality >= 55).length;
+  const manualVoting = voting.filter(s => s.manualPriority).length;
   const superCount = voting.filter(s => s.type === "supercomputer").length;
 
   const avgQuality = voting.length
@@ -627,14 +797,11 @@ function buildConsensus(items = [], home = "", away = "") {
   const hasRealKèo = voting.some(s => s.hdcLean !== "neutral" || s.ouLean !== "neutral");
   const hasScoreOrProb = voting.some(s => s.score || s.hasProbability);
 
-  /*
-    Đây là điểm quan trọng:
-    App cũ dùng expertConsensus.confidence để cộng điểm.
-    Bản V4.2 cố ý khóa confidence thấp hơn để không còn +14 bừa.
-  */
   let appConfidence = 0;
 
-  if (voting.length >= 5 && strongCount >= 3 && avgAgreement >= 0.70 && hasRealKèo) {
+  if (manualVoting >= 2 && voting.length >= 3 && strongCount >= 2 && avgAgreement >= 0.68 && hasRealKèo) {
+    appConfidence = 0.66;
+  } else if (voting.length >= 5 && strongCount >= 3 && avgAgreement >= 0.70 && hasRealKèo) {
     appConfidence = 0.62;
   } else if (voting.length >= 3 && mediumCount >= 3 && avgAgreement >= 0.62 && hasRealKèo) {
     appConfidence = 0.48;
@@ -648,15 +815,18 @@ function buildConsensus(items = [], home = "", away = "") {
   if (!hasScoreOrProb && superCount > 0) appConfidence = Math.min(appConfidence, 0.42);
   if (avgQuality < 55) appConfidence = Math.min(appConfidence, 0.26);
 
-  appConfidence = clamp(appConfidence, 0, 0.66);
+  appConfidence = clamp(appConfidence, 0, 0.68);
+
+  const hardRejected = all.filter(s => s.hardReject).length;
+  const weakIgnored = all.filter(s => !s.voteAllowed).length;
+  const displaySources = sortSourcesForDisplay(all);
 
   const summaryParts = [];
 
-  if (voting.length) {
-    summaryParts.push(`${voting.length} nguồn đủ chuẩn`);
-  } else {
-    summaryParts.push("chưa có nguồn đủ chuẩn");
-  }
+  if (voting.length) summaryParts.push(`${voting.length} nguồn đủ chuẩn`);
+  else summaryParts.push("chưa có nguồn đủ chuẩn");
+
+  if (manualVoting) summaryParts.push(`${manualVoting} nguồn thủ công được tính`);
 
   if (winner.lean !== "neutral") {
     summaryParts.push(`winner nghiêng ${winner.lean === "home" ? home : winner.lean === "away" ? away : "hòa"}`);
@@ -674,14 +844,16 @@ function buildConsensus(items = [], home = "", away = "") {
     summaryParts.push(`tỷ số hay gặp: ${scores.join(", ")}`);
   }
 
-  const weakIgnored = all.filter(s => !s.voteAllowed).length;
-
   return {
     status: voting.length ? "ok" : "weak_or_no_sources",
     safeMode: true,
+    sourcePriorityGate: true,
     sourceCount: voting.length,
     readSourceCount: all.length,
+    displayedSourceCount: displaySources.length,
+    manualVotingSourceCount: manualVoting,
     weakIgnored,
+    hardRejected,
     winnerLean: winner.lean,
     hdcLean: hdc.lean,
     ouLean: ou.lean,
@@ -692,19 +864,20 @@ function buildConsensus(items = [], home = "", away = "") {
     mediumCount,
     superComputerSourceCount: superCount,
     commonScores: scores,
-    summary: `Safe Expert Consensus: ${summaryParts.join("; ")}. ${weakIgnored ? `Đã bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
+    summary: `Source Priority Gate V4.3: ${summaryParts.join("; ")}. ${hardRejected ? `Đã loại ${hardRejected} nguồn sai cặp.` : ""} ${weakIgnored ? `Bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
     votes: {
       winner: winner.score,
       hdc: hdc.score,
       ou: ou.score
     },
-    sources: all,
-    votingSources: voting
+    sources: displaySources,
+    votingSources: voting,
+    rejectedSources: all.filter(s => s.hardReject).slice(0, 8)
   };
 }
 
 /* =======================
-   TAVILY SEARCH
+   TAVILY / FETCH
 ======================= */
 
 async function tavilySearch(query, maxResults = 6) {
@@ -776,37 +949,35 @@ async function fetchPageText(url) {
         .replace(/&amp;/g, "&")
         .replace(/&#8211;/g, "-")
         .replace(/&#8217;/g, "'")
-    ).slice(0, 14000);
+        .replace(/&quot;/g, '"')
+    ).slice(0, 16000);
   } catch {
     return "";
   }
 }
 
 /* =======================
-   AUTO EXPERT SEARCH
+   EXPERT SEARCH V4.3
 ======================= */
 
-async function autoExpertSearch(home, away, league, date) {
-  const expertSites = [
-    "bongdaplus.vn",
-    "bongda24h.vn",
-    "thethao247.vn",
-    "kqbd.mobi",
-    "bongdanet.online",
-    "adidas-fifa.com"
+async function autoExpertSearch(home, away, league, date, manualMode = false) {
+  const preferredQueries = [
+    ...PREFERRED_DOMAINS.map(site => `site:${site} ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`),
+    `site:kqbd.mobi/du-doan-bong-da ${home} ${away} dự đoán bóng đá xác suất tỷ số`,
+    `site:bongdanet.online/sieu-may-tinh-du-doan-bong-da ${home} ${away} siêu máy tính dự đoán bóng đá`
   ];
 
-  const queries = [
-    ...expertSites.map(site => `site:${site} ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`),
-    `site:kqbd.mobi/du-doan-bong-da ${home} ${away} dự đoán bóng đá xác suất tỷ số`,
-    `site:bongdanet.online/sieu-may-tinh-du-doan-bong-da ${home} ${away} siêu máy tính dự đoán bóng đá`,
+  const openQueries = [
     `${home} vs ${away} ${league} ${date} prediction preview betting tips correct score over under handicap`,
-    `${home} vs ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`,
     `${home} vs ${away} supercomputer prediction probability score`
   ];
 
+  const queries = manualMode
+    ? preferredQueries
+    : [...preferredQueries, ...openQueries];
+
   const packs = await Promise.allSettled(
-    queries.map(q => tavilySearch(q, 5))
+    queries.map(q => tavilySearch(q, manualMode ? 4 : 5))
   );
 
   const results = [];
@@ -814,49 +985,49 @@ async function autoExpertSearch(home, away, league, date) {
 
   for (const p of packs) {
     if (p.status !== "fulfilled") continue;
-
-    if (p.value.answer) answers.push(p.value.answer);
+    if (p.value.answer && !manualMode) answers.push(p.value.answer);
     results.push(...(p.value.results || []));
   }
 
   const deduped = uniqByUrl(results)
     .map(r => {
-      const u = fold(r.url || "");
       const blob = `${r.title} ${r.snippet} ${r.url}`;
       let boost = 0;
 
-      if (isTrustedDomain(r.url)) boost += 1.2;
-      if (textHasBothTeams(blob, home, away)) boost += 1.5;
-      if (isSuperComputerUrl(r.url)) boost += 0.7;
-      if (containsAny(blob, ["soi kèo", "soi keo", "nhận định", "nhan dinh", "prediction", "preview"])) boost += 0.6;
-      if (isKnownCategoryUrl(r.url)) boost -= 0.8;
+      if (isTrustedDomain(r.url)) boost += 1.8;
+      if (textHasBothTeams(blob, home, away)) boost += 2.2;
+      if (opponentMismatchInTitle(r.title, home, away) || opponentMismatchInTitle(r.url, home, away)) boost -= 99;
+      if (isSuperComputerUrl(r.url, blob)) boost += 0.8;
+      if (containsAny(blob, ["soi kèo", "soi keo", "nhận định", "nhan dinh", "prediction", "preview"])) boost += 0.7;
+      if (isKnownCategoryUrl(r.url)) boost -= 1.2;
 
-      return { ...r, localBoost: boost, foldedUrl: u };
+      return { ...r, localBoost: boost };
     })
-    .sort((a, b) => (clamp(b.localBoost, -5, 99) + clamp(b.score, 0, 99)) - (clamp(a.localBoost, -5, 99) + clamp(a.score, 0, 99)))
-    .slice(0, 14);
+    .filter(r => r.localBoost > -50)
+    .filter(r => manualMode ? isTrustedDomain(r.url) : true)
+    .sort((a, b) => (b.localBoost + clamp(b.score, 0, 99)) - (a.localBoost + clamp(a.score, 0, 99)))
+    .slice(0, manualMode ? 8 : 12);
 
   const pageTexts = await Promise.all(
-    deduped.slice(0, 10).map(r => fetchPageText(r.url))
+    deduped.map(r => fetchPageText(r.url))
   );
 
-  const sources = deduped.map((r, i) => {
-    const text = pageTexts[i] || r.snippet || "";
-
-    return parseExpertSource({
-      title: r.title,
-      url: r.url,
-      text,
-      type: "auto"
-    }, home, away);
-  });
+  const sources = deduped.map((r, i) => parseExpertSource({
+    title: r.title,
+    url: r.url,
+    text: pageTexts[i] || r.snippet || "",
+    type: "auto",
+    manualPriority: false,
+    fromManualTitle: false
+  }, home, away));
 
   const answerSource = answers.length
     ? parseExpertSource({
         title: "Tavily tổng hợp nhanh",
         url: "tavily://answer",
         text: answers.join(" "),
-        type: "summary"
+        type: "summary",
+        manualPriority: false
       }, home, away)
     : null;
 
@@ -865,26 +1036,69 @@ async function autoExpertSearch(home, away, league, date) {
 
   return {
     ...consensus,
-    whitelist: expertSites,
-    methodologySource: "Safe Expert Consensus V4.2",
+    whitelist: PREFERRED_DOMAINS,
+    methodologySource: "Source Priority Gate V4.3",
     rawAnswer: answers.join(" ").slice(0, 1500)
   };
 }
 
-async function parseManualLinks(links = [], type, home, away) {
-  const urls = links
-    .map(clean)
-    .filter(Boolean)
-    .slice(0, 10);
+async function parseManualInputs(lines = [], type, home, away) {
+  const inputs = lines.map(clean).filter(Boolean).slice(0, 12);
+  const directUrls = inputs.filter(isUrl);
+  const titleQueries = inputs.filter(x => !isUrl(x));
 
-  const texts = await Promise.all(urls.map(u => fetchPageText(u)));
+  const directTexts = await Promise.all(directUrls.map(u => fetchPageText(u)));
 
-  return urls.map((url, i) => parseExpertSource({
+  const directSources = directUrls.map((url, i) => parseExpertSource({
     title: url,
     url,
-    text: texts[i] || "",
-    type
+    text: directTexts[i] || "",
+    type,
+    manualPriority: true,
+    fromManualTitle: false
   }, home, away));
+
+  const titleSearches = await Promise.allSettled(
+    titleQueries.map(async q => {
+      const searchQuery = `"${q}" ${home} ${away}`;
+      const pack = await tavilySearch(searchQuery, 3);
+      const results = uniqByUrl(pack.results || [])
+        .filter(r => !opponentMismatchInTitle(r.title, home, away))
+        .slice(0, 2);
+
+      const pageTexts = await Promise.all(results.map(r => fetchPageText(r.url)));
+
+      const parsed = results.map((r, i) => parseExpertSource({
+        title: r.title || q,
+        url: r.url,
+        text: pageTexts[i] || r.snippet || q,
+        type,
+        manualPriority: true,
+        fromManualTitle: true
+      }, home, away));
+
+      if (!parsed.length) {
+        parsed.push(parseExpertSource({
+          title: q,
+          url: `manual-title://${encodeURIComponent(q)}`,
+          text: q,
+          type,
+          manualPriority: true,
+          fromManualTitle: true
+        }, home, away));
+      }
+
+      return parsed;
+    })
+  );
+
+  const titleSources = [];
+
+  for (const r of titleSearches) {
+    if (r.status === "fulfilled") titleSources.push(...r.value);
+  }
+
+  return [...directSources, ...titleSources];
 }
 
 /* =======================
@@ -914,7 +1128,6 @@ function looksLikeRealLineup(chunk = "") {
 
   const commaCount = (text.match(/,/g) || []).length;
   const semicolonCount = (text.match(/;/g) || []).length;
-
   const hasFormation = /\b[3-5]-[2-5]-[1-4]\b/.test(text);
 
   const hasPositionWords = containsAny(lowerText, [
@@ -935,17 +1148,14 @@ function looksLikeRealLineup(chunk = "") {
 }
 
 function cleanLineupChunk(chunk = "") {
-  let text = clean(chunk);
-
-  text = text
+  return clean(chunk)
     .replace(/Predicted Lineups\s*&\s*Starting XIs/gi, "")
     .replace(/Lineups\s*&\s*Injury News/gi, "")
     .replace(/RotoWire Soccer Lineups Widget/gi, "")
     .replace(/###/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
-
-  return text.slice(0, 900);
+    .trim()
+    .slice(0, 900);
 }
 
 function webLineupFallback(home, away, sourceText, consensus) {
@@ -988,31 +1198,6 @@ function webLineupFallback(home, away, sourceText, consensus) {
       const chunk = cleanLineupChunk(m[0]);
 
       if (looksLikeRealLineup(chunk)) {
-        return chunk;
-      }
-    }
-
-    const idx = fold(text).indexOf(fold(teamRaw));
-
-    if (idx >= 0) {
-      const chunk = cleanLineupChunk(text.slice(Math.max(0, idx - 400), idx + 1800));
-
-      if (
-        containsAny(chunk, [
-          "predicted lineup",
-          "expected lineup",
-          "starting xi",
-          "probable lineup",
-          "đội hình",
-          "doi hinh",
-          "lineup",
-          "gk",
-          "df",
-          "mf",
-          "fw"
-        ]) &&
-        looksLikeRealLineup(chunk)
-      ) {
         return chunk;
       }
     }
@@ -1085,35 +1270,79 @@ async function apiFootball(path) {
   return res.json();
 }
 
+function teamSearchCandidates(name = "") {
+  const aliases = aliasSetFor(name);
+  const raw = clean(name);
+
+  return [...new Set([raw, ...aliases])]
+    .map(clean)
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
 async function findTeamId(name) {
-  const data = await apiFootball(`/teams?search=${encodeURIComponent(name)}`);
-  const row = data?.response?.[0];
+  const candidates = teamSearchCandidates(name);
 
-  return row?.team?.id || null;
+  for (const c of candidates) {
+    const data = await apiFootball(`/teams?search=${encodeURIComponent(c)}`);
+    const row = data?.response?.[0];
+
+    if (row?.team?.id) return row.team.id;
+  }
+
+  return null;
 }
 
-async function findFixture(home, away) {
+async function findFixture(home, away, date = "") {
   const homeId = await findTeamId(home);
+  const awayId = await findTeamId(away);
 
-  if (!homeId) return null;
+  const pools = [];
 
-  const data = await apiFootball(`/fixtures?team=${homeId}&next=15`);
-  const rows = data?.response || [];
-  const awayLower = fold(away);
+  if (homeId) {
+    const data = await apiFootball(`/fixtures?team=${homeId}&next=30`);
+    pools.push(...(data?.response || []));
+  }
 
-  return rows.find(f => {
-    const h = fold(f?.teams?.home?.name);
-    const a = fold(f?.teams?.away?.name);
+  if (awayId) {
+    const data = await apiFootball(`/fixtures?team=${awayId}&next=30`);
+    pools.push(...(data?.response || []));
+  }
 
-    return h.includes(awayLower) || a.includes(awayLower) || awayLower.includes(h) || awayLower.includes(a);
-  }) || rows[0] || null;
+  const rows = pools.filter(Boolean);
+  const seen = new Set();
+  const deduped = [];
+
+  for (const f of rows) {
+    const id = f?.fixture?.id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    deduped.push(f);
+  }
+
+  const exact = deduped.filter(f => {
+    const h = f?.teams?.home?.name || "";
+    const a = f?.teams?.away?.name || "";
+    const blob = `${h} ${a}`;
+    return textHasTeam(blob, home) && textHasTeam(blob, away);
+  });
+
+  if (!exact.length) return deduped[0] || null;
+
+  if (date) {
+    const dText = fold(date);
+    const dated = exact.find(f => fold(f?.fixture?.date || "").includes(dText));
+    if (dated) return dated;
+  }
+
+  return exact[0];
 }
 
-async function footballStructured(home, away) {
+async function footballStructured(home, away, date = "") {
   if (!process.env.API_FOOTBALL_KEY) return null;
 
   try {
-    const fixture = await findFixture(home, away);
+    const fixture = await findFixture(home, away, date);
 
     if (!fixture?.fixture?.id) return null;
 
@@ -1131,17 +1360,17 @@ async function footballStructured(home, away) {
     const awayName = fixture?.teams?.away?.name || away;
 
     const homeInj = injRows
-      .filter(x => fold(x?.team?.name).includes(fold(homeName)) || fold(homeName).includes(fold(x?.team?.name)))
+      .filter(x => textHasTeam(x?.team?.name || "", homeName))
       .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
       .slice(0, 6);
 
     const awayInj = injRows
-      .filter(x => fold(x?.team?.name).includes(fold(awayName)) || fold(awayName).includes(fold(x?.team?.name)))
+      .filter(x => textHasTeam(x?.team?.name || "", awayName))
       .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
       .slice(0, 6);
 
-    const homeLine = lineRows.find(x => fold(x?.team?.name).includes(fold(homeName)));
-    const awayLine = lineRows.find(x => fold(x?.team?.name).includes(fold(awayName)));
+    const homeLine = lineRows.find(x => textHasTeam(x?.team?.name || "", homeName));
+    const awayLine = lineRows.find(x => textHasTeam(x?.team?.name || "", awayName));
 
     return {
       fixtureId,
@@ -1172,7 +1401,7 @@ function scoreContextFromText(text = "") {
     tempo -= 1;
   }
 
-  if (containsAny(text, ["attacking", "open game", "high scoring", "over", "pressing", "tấn công", "cởi mở", "nhiều bàn", "tài"])) {
+  if (containsAny(text, ["attacking", "open game", "high scoring", "over", "pressing", "tấn công", "cởi mở", "nhiều bàn", "tài", "mưa bàn thắng"])) {
     tempo += 1;
   }
 
@@ -1198,11 +1427,12 @@ function scoreContextFromText(text = "") {
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    name: "Soi Kèo AI Research API V4.2 Safe Expert Consensus",
+    name: "Soi Kèo AI Research API V4.3 Source Priority Gate",
     endpoint: "/api/research",
     tavily: Boolean(process.env.TAVILY_API_KEY),
     apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
-    safeExpertConsensus: true
+    safeExpertConsensus: true,
+    sourcePriorityGate: true
   });
 });
 
@@ -1219,23 +1449,27 @@ app.post("/api/research", async (req, res) => {
 
     const expertLinks = Array.isArray(req.body.expertLinks) ? req.body.expertLinks : [];
     const superComputerLinks = Array.isArray(req.body.superComputerLinks) ? req.body.superComputerLinks : [];
+    const manualInputs = [...expertLinks, ...superComputerLinks].map(clean).filter(Boolean);
+    const manualMode = manualInputs.length > 0;
+
     const autoExpertEnabled = req.body.autoExpertSearch !== false;
 
     const teamNewsQuery = `${home} vs ${away} ${league} ${date} predicted lineups injuries suspensions team news preview tactical style`;
 
     const jobs = [
       tavilySearch(teamNewsQuery, 6),
-      footballStructured(home, away)
+      footballStructured(home, away, date)
     ];
 
     if (autoExpertEnabled) {
-      jobs.push(autoExpertSearch(home, away, league, date));
+      jobs.push(autoExpertSearch(home, away, league, date, manualMode));
     } else {
       jobs.push(Promise.resolve({
         status: "off",
         sourceCount: 0,
         readSourceCount: 0,
         weakIgnored: 0,
+        hardRejected: 0,
         winnerLean: "neutral",
         hdcLean: "neutral",
         ouLean: "neutral",
@@ -1247,8 +1481,8 @@ app.post("/api/research", async (req, res) => {
       }));
     }
 
-    jobs.push(parseManualLinks(expertLinks, "expert_manual", home, away));
-    jobs.push(parseManualLinks(superComputerLinks, "supercomputer_manual", home, away));
+    jobs.push(parseManualInputs(expertLinks, "expert_manual", home, away));
+    jobs.push(parseManualInputs(superComputerLinks, "supercomputer_manual", home, away));
 
     const [
       webInfo,
@@ -1263,13 +1497,19 @@ app.post("/api/research", async (req, res) => {
       ...(manualSuperSources || [])
     ];
 
-    const combinedConsensus = manualSources.length
-      ? buildConsensus([...(autoConsensus.sources || []), ...manualSources], home, away)
-      : autoConsensus;
+    const combinedSources = [
+      ...manualSources,
+      ...(autoConsensus.sources || [])
+    ];
+
+    const combinedConsensus = buildConsensus(combinedSources, home, away);
 
     combinedConsensus.rawAnswer = autoConsensus.rawAnswer || "";
-    combinedConsensus.whitelist = autoConsensus.whitelist || [];
-    combinedConsensus.methodologySource = "Safe Expert Consensus V4.2";
+    combinedConsensus.whitelist = PREFERRED_DOMAINS;
+    combinedConsensus.methodologySource = "Source Priority Gate V4.3";
+    combinedConsensus.manualSourceCount = manualSources.length;
+    combinedConsensus.autoExpertEnabled = autoExpertEnabled;
+    combinedConsensus.manualMode = manualMode;
 
     const sourceText = [
       webInfo.answer,
@@ -1331,7 +1571,7 @@ app.post("/api/research", async (req, res) => {
 
       earlyGoalRisk:
         combinedConsensus.ouLean === "over" ||
-        containsAny(sourceText, ["open game", "attacking", "high scoring", "tài", "nhiều bàn"]),
+        containsAny(sourceText, ["open game", "attacking", "high scoring", "tài", "nhiều bàn", "mưa bàn thắng"]),
 
       rotation:
         containsAny(sourceText, ["rotation", "rotate", "xoay tua", "rest players", "giữ chân"]),
@@ -1358,9 +1598,8 @@ app.post("/api/research", async (req, res) => {
       flags,
       expertConsensus: {
         ...combinedConsensus,
-        manualSourceCount: manualSources.length,
-        autoExpertEnabled,
-        safeMode: true
+        safeMode: true,
+        sourcePriorityGate: true
       },
       sources: [
         ...(webInfo.results || []),
@@ -1376,5 +1615,5 @@ app.post("/api/research", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Soi Kèo AI Research API V4.2 chạy tại http://localhost:${PORT}`);
+  console.log(`Soi Kèo AI Research API V4.3 chạy tại http://localhost:${PORT}`);
 });
