@@ -1,4 +1,4 @@
-// server.js - Soi Kèo AI Research API V4.1 Full Clean
+// server.js - Soi Kèo AI Research API V4.2 Safe Expert Consensus
 // Node.js 18+
 // package.json cần có: express, cors, dotenv và "type": "module"
 
@@ -22,6 +22,13 @@ function clean(s = "") {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
+function fold(s = "") {
+  return clean(s)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function lower(s = "") {
   return clean(s).toLowerCase();
 }
@@ -33,8 +40,8 @@ function clamp(x, a, b) {
 }
 
 function containsAny(text = "", words = []) {
-  const t = lower(text);
-  return words.some(w => t.includes(lower(w)));
+  const t = fold(text);
+  return words.some(w => t.includes(fold(w)));
 }
 
 function escapeRegExp(s = "") {
@@ -55,8 +62,26 @@ function uniqByUrl(items = []) {
   return out;
 }
 
+function domainOf(url = "") {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "").replace(/^m\./, "");
+  } catch {
+    if (String(url).startsWith("tavily://")) return "tavily";
+    return "unknown";
+  }
+}
+
+function pathOf(url = "") {
+  try {
+    return new URL(url).pathname || "";
+  } catch {
+    return "";
+  }
+}
+
 function normalizeTeamName(s = "") {
-  return lower(s)
+  return fold(s)
     .replace(/\bfc\b/g, "")
     .replace(/\bafc\b/g, "")
     .replace(/\bcf\b/g, "")
@@ -70,13 +95,86 @@ function teamTokens(name = "") {
 }
 
 function textHasTeam(text = "", team = "") {
-  const t = lower(text);
+  const t = normalizeTeamName(text);
   const full = normalizeTeamName(team);
 
   if (full && t.includes(full)) return true;
 
   const toks = teamTokens(team);
   return toks.some(tok => t.includes(tok));
+}
+
+function textHasBothTeams(text = "", home = "", away = "") {
+  return textHasTeam(text, home) && textHasTeam(text, away);
+}
+
+/* =======================
+   TRUSTED DOMAINS
+======================= */
+
+const DOMAIN_PROFILE = {
+  "bongdaplus.vn": {
+    type: "expert_main",
+    priority: 1.22,
+    label: "Bongdaplus"
+  },
+  "bongda24h.vn": {
+    type: "expert_main",
+    priority: 1.22,
+    label: "Bongda24h"
+  },
+  "thethao247.vn": {
+    type: "expert_main",
+    priority: 1.18,
+    label: "Thể Thao 247"
+  },
+  "kqbd.mobi": {
+    type: "expert_secondary",
+    priority: 1.0,
+    label: "KQBD.mobi"
+  },
+  "bongdanet.online": {
+    type: "expert_secondary",
+    priority: 0.95,
+    label: "Bongdanet"
+  },
+  "adidas-fifa.com": {
+    type: "method_secondary",
+    priority: 0.72,
+    label: "Adidas-Fifa"
+  }
+};
+
+function domainPriority(url = "") {
+  const d = domainOf(url);
+  return DOMAIN_PROFILE[d]?.priority || 0.65;
+}
+
+function isTrustedDomain(url = "") {
+  return Boolean(DOMAIN_PROFILE[domainOf(url)]);
+}
+
+function isKnownCategoryUrl(url = "") {
+  const p = fold(pathOf(url));
+  const u = fold(url);
+
+  return (
+    u.includes("nhan-dinh-bong-da-tags") ||
+    u.includes("nhan-dinh-bong-da-c344") ||
+    u.includes("nhan-dinh-bong-da-c288") ||
+    u.includes("/nhan-dinh-bong-da") && !/\d{4}|vs|\.html/.test(u) ||
+    u.includes("/soi-keo-bong-da/") && !/\d{4}|vs|\.html/.test(u)
+  );
+}
+
+function isSuperComputerUrl(url = "") {
+  const u = fold(url);
+  return (
+    u.includes("du-doan-bong-da") ||
+    u.includes("sieu-may-tinh") ||
+    u.includes("supercomputer") ||
+    u.includes("probability")
+  );
 }
 
 /* =======================
@@ -87,7 +185,7 @@ function detectScore(text = "") {
   const t = clean(text);
 
   const patterns = [
-    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan)[^\d]{0,40}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
+    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan)[^\d]{0,45}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
     /(\d{1,2})\s*[-:]\s*(\d{1,2})/
   ];
 
@@ -108,6 +206,7 @@ function detectScore(text = "") {
 
 function scoreToLean(score = "") {
   if (!score) return "neutral";
+
   const [h, a] = score.split("-").map(Number);
 
   if (!Number.isFinite(h) || !Number.isFinite(a)) return "neutral";
@@ -116,28 +215,35 @@ function scoreToLean(score = "") {
   return "draw";
 }
 
+function hasProbabilityText(text = "") {
+  const t = fold(text);
+  return (
+    /\b\d{1,3}\s*%/.test(t) &&
+    containsAny(t, ["xác suất", "xac suat", "probability", "chance", "win probability", "tỷ lệ thắng", "ti le thang"])
+  );
+}
+
 function detectOU(text = "") {
-  const t = lower(text);
+  const t = fold(text);
 
   let over = 0;
   let under = 0;
 
   const overWords = [
     "over", "over 1.5", "over 2.5", "over 3.5",
-    "tài", "tai", "nổ tài", "no tai",
-    "nhiều bàn", "nhieu ban",
+    "tai", "no tai", "nhieu ban",
     "high scoring", "goals expected", "open game", "attacking game",
     "both teams to score", "btts"
   ];
 
   const underWords = [
     "under", "under 1.5", "under 2.5", "under 3.5",
-    "xỉu", "xiu", "ít bàn", "it ban",
+    "xiu", "it ban",
     "low scoring", "tight game", "cautious", "defensive", "low block"
   ];
 
-  for (const w of overWords) if (t.includes(lower(w))) over += 1;
-  for (const w of underWords) if (t.includes(lower(w))) under += 1;
+  for (const w of overWords) if (t.includes(fold(w))) over += 1;
+  for (const w of underWords) if (t.includes(fold(w))) under += 1;
 
   if (over >= under + 1) return "over";
   if (under >= over + 1) return "under";
@@ -145,7 +251,7 @@ function detectOU(text = "") {
 }
 
 function detectWinner(text = "", home = "", away = "") {
-  const t = lower(text);
+  const t = fold(text);
   const homeNorm = normalizeTeamName(home);
   const awayNorm = normalizeTeamName(away);
 
@@ -164,7 +270,6 @@ function detectWinner(text = "", home = "", away = "") {
     `${homeNorm} win`,
     `${homeNorm} to win`,
     `${homeNorm} victory`,
-    `${homeNorm} thắng`,
     `${homeNorm} thang`,
     `win for ${homeNorm}`,
     `victory for ${homeNorm}`
@@ -174,7 +279,6 @@ function detectWinner(text = "", home = "", away = "") {
     `${awayNorm} win`,
     `${awayNorm} to win`,
     `${awayNorm} victory`,
-    `${awayNorm} thắng`,
     `${awayNorm} thang`,
     `win for ${awayNorm}`,
     `victory for ${awayNorm}`
@@ -183,10 +287,10 @@ function detectWinner(text = "", home = "", away = "") {
   for (const p of homeWinPhrases) if (p.trim() && t.includes(p)) hs += 3;
   for (const p of awayWinPhrases) if (p.trim() && t.includes(p)) as += 3;
 
-  if (containsAny(t, ["draw", "hòa", "hoa", "stalemate"])) ds += 2;
+  if (containsAny(t, ["draw", "hoa", "stalemate"])) ds += 2;
 
-  if (textHasTeam(t, home) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao"])) hs += 1;
-  if (textHasTeam(t, away) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao"])) as += 1;
+  if (textHasTeam(t, home) && containsAny(t, ["favorite", "favourite", "duoc danh gia cao"])) hs += 1;
+  if (textHasTeam(t, away) && containsAny(t, ["favorite", "favourite", "duoc danh gia cao"])) as += 1;
 
   if (hs > as && hs > ds) return "home";
   if (as > hs && as > ds) return "away";
@@ -196,28 +300,28 @@ function detectWinner(text = "", home = "", away = "") {
 
 function detectHdc(text = "", home = "", away = "") {
   const winner = detectWinner(text, home, away);
-  const t = lower(text);
+  const t = fold(text);
 
   let homeHdc = 0;
   let awayHdc = 0;
 
-  if (winner === "home") homeHdc += 1.5;
-  if (winner === "away") awayHdc += 1.5;
+  if (winner === "home") homeHdc += 1.2;
+  if (winner === "away") awayHdc += 1.2;
 
   if (winner === "draw") {
-    homeHdc += 0.5;
-    awayHdc += 0.5;
+    homeHdc += 0.35;
+    awayHdc += 0.35;
   }
 
-  if (containsAny(t, ["handicap home", "home handicap", "chủ nhà", "chu nha", "cửa trên", "cua tren"])) {
+  if (containsAny(t, ["handicap home", "home handicap", "chu nha", "cua tren"])) {
     homeHdc += 1;
   }
 
-  if (containsAny(t, ["handicap away", "away handicap", "đội khách", "doi khach", "cửa dưới", "cua duoi"])) {
+  if (containsAny(t, ["handicap away", "away handicap", "doi khach", "cua duoi"])) {
     awayHdc += 1;
   }
 
-  if (containsAny(t, ["cover the spread", "cover handicap"])) {
+  if (containsAny(t, ["cover the spread", "cover handicap", "thang keo", "an keo"])) {
     if (textHasTeam(t, home)) homeHdc += 1;
     if (textHasTeam(t, away)) awayHdc += 1;
   }
@@ -227,17 +331,164 @@ function detectHdc(text = "", home = "", away = "") {
   return "neutral";
 }
 
-function sourceConfidence(text = "", title = "") {
-  let c = 0.45;
-  const t = lower(`${title} ${text}`);
+function detectSourceType(url = "", text = "") {
+  const blob = `${url} ${text}`;
 
-  if (containsAny(t, ["prediction", "preview", "nhận định", "nhan dinh", "soi kèo", "soi keo"])) c += 0.08;
-  if (containsAny(t, ["supercomputer", "siêu máy tính", "sieu may tinh", "probability", "xác suất", "xac suat"])) c += 0.10;
-  if (detectScore(t)) c += 0.06;
-  if (detectOU(t) !== "neutral") c += 0.05;
-  if (containsAny(t, ["injury", "lineup", "đội hình", "doi hinh", "chấn thương", "chan thuong"])) c += 0.04;
+  if (
+    isSuperComputerUrl(url) ||
+    containsAny(blob, [
+      "supercomputer",
+      "sieu may tinh",
+      "probability",
+      "xac suat",
+      "machine learning",
+      "monte carlo"
+    ])
+  ) {
+    return "supercomputer";
+  }
 
-  return clamp(c, 0.35, 0.82);
+  return "expert";
+}
+
+/* =======================
+   SOURCE QUALITY
+======================= */
+
+function qualitySource({ title = "", url = "", text = "", baseType = "auto" }, home = "", away = "") {
+  const domain = domainOf(url);
+  const path = pathOf(url);
+  const titleBlob = `${title} ${url}`;
+  const all = `${title}. ${url}. ${text}`;
+
+  const titleBoth = textHasBothTeams(title, home, away);
+  const urlBoth = textHasBothTeams(url, home, away);
+  const textBoth = textHasBothTeams(all, home, away);
+  const matchOk = textBoth;
+
+  const isCategory = isKnownCategoryUrl(url) && !titleBoth && !urlBoth;
+  const trusted = isTrustedDomain(url);
+  const type = detectSourceType(url, all);
+
+  const score = detectScore(all);
+  const ou = detectOU(all);
+  const hdc = detectHdc(all, home, away);
+  const winner = detectWinner(all, home, away);
+  const hasProb = hasProbabilityText(all);
+
+  const hasHdcText = hdc !== "neutral";
+  const hasOuText = ou !== "neutral";
+  const hasWinnerText = winner !== "neutral";
+  const hasScoreText = Boolean(score);
+
+  let q = 0;
+  const flags = [];
+
+  if (matchOk) {
+    q += 22;
+    flags.push("đúng 2 đội");
+  } else {
+    flags.push("không xác minh đủ 2 đội");
+  }
+
+  if (titleBoth) {
+    q += 25;
+    flags.push("title đúng trận");
+  }
+
+  if (urlBoth) {
+    q += 15;
+    flags.push("url đúng trận");
+  }
+
+  if (trusted) {
+    q += 10;
+    flags.push(`domain ưu tiên: ${DOMAIN_PROFILE[domain]?.label || domain}`);
+  }
+
+  if (hasScoreText) {
+    q += 12;
+    flags.push("có tỷ số");
+  }
+
+  if (hasProb) {
+    q += 14;
+    flags.push("có xác suất");
+  }
+
+  if (hasOuText) {
+    q += 10;
+    flags.push("có T/X");
+  }
+
+  if (hasHdcText) {
+    q += 10;
+    flags.push("có HDC");
+  }
+
+  if (hasWinnerText) {
+    q += 6;
+    flags.push("có winner");
+  }
+
+  if (type === "supercomputer") {
+    q += 6;
+    flags.push("nguồn siêu máy tính");
+  }
+
+  if (isCategory) {
+    q -= 28;
+    flags.push("trang chuyên mục, giảm mạnh");
+  }
+
+  if (domain === "tavily") {
+    q -= 20;
+    flags.push("tóm tắt Tavily, không phải bài gốc");
+  }
+
+  if (!matchOk) q = Math.min(q, 20);
+
+  const contentSignals = [hasScoreText, hasProb, hasOuText, hasHdcText, hasWinnerText].filter(Boolean).length;
+
+  if (contentSignals === 0) {
+    q = Math.min(q, 35);
+    flags.push("không có tín hiệu kèo rõ");
+  }
+
+  q = clamp(q, 0, 100);
+
+  let qualityLabel = "rejected";
+  if (q >= 72) qualityLabel = "strong";
+  else if (q >= 55) qualityLabel = "medium";
+  else if (q >= 40) qualityLabel = "weak";
+
+  const voteAllowed = matchOk && q >= 50 && !isCategory;
+
+  const priority = domainPriority(url);
+  const confidence = clamp(0.25 + q / 145, 0.25, 0.82);
+  const voteWeight = voteAllowed ? confidence * (q / 100) * priority : 0;
+
+  return {
+    domain,
+    path,
+    trusted,
+    type,
+    matchOk,
+    titleBoth,
+    urlBoth,
+    isCategory,
+    quality: q,
+    qualityLabel,
+    voteAllowed,
+    voteWeight,
+    flags,
+    score,
+    hasProb,
+    hasOuText,
+    hasHdcText,
+    hasWinnerText,
+    contentSignals
+  };
 }
 
 /* =======================
@@ -246,12 +497,12 @@ function sourceConfidence(text = "", title = "") {
 
 function parseExpertSource({ title = "", url = "", text = "", type = "auto" }, home, away) {
   const blob = clean(`${title}. ${text}`);
+  const q = qualitySource({ title, url, text: blob, baseType: type }, home, away);
 
   const winnerLean = detectWinner(blob, home, away);
-  const hdcLean = detectHdc(blob, home, away);
-  const ouLean = detectOU(blob);
-  const score = detectScore(blob);
-  const confidence = sourceConfidence(blob, title);
+  const hdcLean = q.voteAllowed ? detectHdc(blob, home, away) : "neutral";
+  const ouLean = q.voteAllowed ? detectOU(blob) : "neutral";
+  const score = q.voteAllowed ? detectScore(blob) : "";
 
   const note = [];
   if (winnerLean !== "neutral") note.push(`Winner lean: ${winnerLean}`);
@@ -262,31 +513,64 @@ function parseExpertSource({ title = "", url = "", text = "", type = "auto" }, h
   return {
     title: clean(title) || url,
     url,
-    type,
-    winnerLean,
+    domain: q.domain,
+    type: q.type || type,
+    quality: q.quality,
+    qualityLabel: q.qualityLabel,
+    voteAllowed: q.voteAllowed,
+    voteWeight: q.voteWeight,
+    qualityFlags: q.flags,
+    matchOk: q.matchOk,
+    isCategory: q.isCategory,
+    winnerLean: q.voteAllowed ? winnerLean : "neutral",
     hdcLean,
     ouLean,
     score,
-    confidence,
-    note: note.join(" · ") || "Nguồn có liên quan nhưng không rút được hướng rõ.",
-    snippet: blob.slice(0, 700)
+    hasProbability: q.hasProb,
+    confidence: q.confidence,
+    note: note.join(" · ") || "Nguồn có liên quan nhưng chưa đủ chuẩn để vote mạnh.",
+    snippet: blob.slice(0, 800)
   };
 }
 
-function majorityLean(items = [], field = "") {
+function bestPerDomain(sources = []) {
+  const map = new Map();
+
+  for (const s of sources) {
+    if (!s || !s.url) continue;
+
+    const key = s.domain || domainOf(s.url);
+
+    const old = map.get(key);
+
+    const oldPower = old ? (old.voteWeight || 0) + (old.quality || 0) / 200 : -1;
+    const newPower = (s.voteWeight || 0) + (s.quality || 0) / 200;
+
+    if (!old || newPower > oldPower) {
+      map.set(key, s);
+    }
+  }
+
+  return [...map.values()];
+}
+
+function weightedLean(items = [], field = "") {
   const score = {};
 
   for (const s of items) {
     const v = s[field] || "neutral";
     if (v === "neutral") continue;
 
-    score[v] = (score[v] || 0) + clamp(s.confidence || 0.5, 0.1, 1);
+    const w = clamp(s.voteWeight || 0, 0, 2);
+    if (w <= 0) continue;
+
+    score[v] = (score[v] || 0) + w;
   }
 
   const entries = Object.entries(score).sort((a, b) => b[1] - a[1]);
 
   if (!entries.length) {
-    return { lean: "neutral", confidence: 0, score };
+    return { lean: "neutral", agreement: 0, score };
   }
 
   const total = entries.reduce((a, b) => a + b[1], 0);
@@ -294,7 +578,7 @@ function majorityLean(items = [], field = "") {
 
   return {
     lean: top[0],
-    confidence: total > 0 ? clamp(top[1] / total, 0, 1) : 0,
+    agreement: total > 0 ? clamp(top[1] / total, 0, 1) : 0,
     score
   };
 }
@@ -304,7 +588,8 @@ function commonScores(items = []) {
 
   for (const s of items) {
     if (!s.score) continue;
-    map[s.score] = (map[s.score] || 0) + clamp(s.confidence || 0.5, 0.1, 1);
+    const w = clamp(s.voteWeight || 0, 0.1, 2);
+    map[s.score] = (map[s.score] || 0) + w;
   }
 
   return Object.entries(map)
@@ -314,25 +599,67 @@ function commonScores(items = []) {
 }
 
 function buildConsensus(items = [], home = "", away = "") {
-  const valid = items.filter(x => x && x.url);
+  const all = items.filter(x => x && x.url);
+  const domainBest = bestPerDomain(all);
+  const voting = domainBest.filter(s => s.voteAllowed && s.voteWeight > 0);
 
-  const winner = majorityLean(valid, "winnerLean");
-  const hdc = majorityLean(valid, "hdcLean");
-  const ou = majorityLean(valid, "ouLean");
-  const scores = commonScores(valid);
+  const winner = weightedLean(voting, "winnerLean");
+  const hdc = weightedLean(voting, "hdcLean");
+  const ou = weightedLean(voting, "ouLean");
+  const scores = commonScores(voting);
 
-  const sourceCount = valid.length;
+  const strongCount = voting.filter(s => s.quality >= 72).length;
+  const mediumCount = voting.filter(s => s.quality >= 55).length;
+  const superCount = voting.filter(s => s.type === "supercomputer").length;
 
-  const clearFields = [winner, hdc, ou].filter(x => x.lean !== "neutral" && x.confidence >= 0.52).length;
-
-  const confidence = sourceCount
-    ? clamp((winner.confidence + hdc.confidence + ou.confidence) / 3 + Math.min(sourceCount, 8) * 0.025 + clearFields * 0.04, 0, 0.88)
+  const avgQuality = voting.length
+    ? voting.reduce((a, b) => a + (b.quality || 0), 0) / voting.length
     : 0;
+
+  const agreements = [winner, hdc, ou]
+    .filter(x => x.lean !== "neutral")
+    .map(x => x.agreement);
+
+  const avgAgreement = agreements.length
+    ? agreements.reduce((a, b) => a + b, 0) / agreements.length
+    : 0;
+
+  const hasRealKèo = voting.some(s => s.hdcLean !== "neutral" || s.ouLean !== "neutral");
+  const hasScoreOrProb = voting.some(s => s.score || s.hasProbability);
+
+  /*
+    Đây là điểm quan trọng:
+    App cũ dùng expertConsensus.confidence để cộng điểm.
+    Bản V4.2 cố ý khóa confidence thấp hơn để không còn +14 bừa.
+  */
+  let appConfidence = 0;
+
+  if (voting.length >= 5 && strongCount >= 3 && avgAgreement >= 0.70 && hasRealKèo) {
+    appConfidence = 0.62;
+  } else if (voting.length >= 3 && mediumCount >= 3 && avgAgreement >= 0.62 && hasRealKèo) {
+    appConfidence = 0.48;
+  } else if (voting.length >= 2 && avgAgreement >= 0.58) {
+    appConfidence = 0.34;
+  } else if (voting.length >= 1) {
+    appConfidence = 0.22;
+  }
+
+  if (!hasRealKèo) appConfidence = Math.min(appConfidence, 0.28);
+  if (!hasScoreOrProb && superCount > 0) appConfidence = Math.min(appConfidence, 0.42);
+  if (avgQuality < 55) appConfidence = Math.min(appConfidence, 0.26);
+
+  appConfidence = clamp(appConfidence, 0, 0.66);
 
   const summaryParts = [];
 
+  if (voting.length) {
+    summaryParts.push(`${voting.length} nguồn đủ chuẩn`);
+  } else {
+    summaryParts.push("chưa có nguồn đủ chuẩn");
+  }
+
   if (winner.lean !== "neutral") {
-    summaryParts.push(`đa số nguồn nghiêng ${winner.lean === "home" ? home : winner.lean === "away" ? away : "hòa"}`);
+    summaryParts.push(`winner nghiêng ${winner.lean === "home" ? home : winner.lean === "away" ? away : "hòa"}`);
   }
 
   if (hdc.lean !== "neutral") {
@@ -347,23 +674,32 @@ function buildConsensus(items = [], home = "", away = "") {
     summaryParts.push(`tỷ số hay gặp: ${scores.join(", ")}`);
   }
 
+  const weakIgnored = all.filter(s => !s.voteAllowed).length;
+
   return {
-    status: sourceCount ? "ok" : "no_sources",
-    sourceCount,
+    status: voting.length ? "ok" : "weak_or_no_sources",
+    safeMode: true,
+    sourceCount: voting.length,
+    readSourceCount: all.length,
+    weakIgnored,
     winnerLean: winner.lean,
     hdcLean: hdc.lean,
     ouLean: ou.lean,
-    confidence,
+    confidence: appConfidence,
+    rawAgreement: avgAgreement,
+    avgQuality,
+    strongCount,
+    mediumCount,
+    superComputerSourceCount: superCount,
     commonScores: scores,
-    summary: summaryParts.length
-      ? `Expert consensus: ${summaryParts.join("; ")}.`
-      : "Expert consensus chưa có hướng rõ.",
+    summary: `Safe Expert Consensus: ${summaryParts.join("; ")}. ${weakIgnored ? `Đã bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
     votes: {
       winner: winner.score,
       hdc: hdc.score,
       ou: ou.score
     },
-    sources: valid
+    sources: all,
+    votingSources: voting
   };
 }
 
@@ -440,7 +776,7 @@ async function fetchPageText(url) {
         .replace(/&amp;/g, "&")
         .replace(/&#8211;/g, "-")
         .replace(/&#8217;/g, "'")
-    ).slice(0, 12000);
+    ).slice(0, 14000);
   } catch {
     return "";
   }
@@ -451,24 +787,26 @@ async function fetchPageText(url) {
 ======================= */
 
 async function autoExpertSearch(home, away, league, date) {
-  const preferredQueries = [
-    `site:adidas-fifa.com ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`,
-    `site:adidas-fifa.com ${home} vs ${away} prediction preview over under handicap correct score`,
-    `site:thethao24h.info ${home} ${away} soi kèo nhận định tài xỉu handicap`,
-    `site:thethao24h.info ${home} vs ${away} prediction correct score`
+  const expertSites = [
+    "bongdaplus.vn",
+    "bongda24h.vn",
+    "thethao247.vn",
+    "kqbd.mobi",
+    "bongdanet.online",
+    "adidas-fifa.com"
   ];
 
-  const generalQueries = [
+  const queries = [
+    ...expertSites.map(site => `site:${site} ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`),
+    `site:kqbd.mobi/du-doan-bong-da ${home} ${away} dự đoán bóng đá xác suất tỷ số`,
+    `site:bongdanet.online/sieu-may-tinh-du-doan-bong-da ${home} ${away} siêu máy tính dự đoán bóng đá`,
     `${home} vs ${away} ${league} ${date} prediction preview betting tips correct score over under handicap`,
     `${home} vs ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`,
-    `${home} vs ${away} supercomputer prediction probability score`,
-    `${home} vs ${away} máy tính dự đoán bóng đá siêu máy tính xác suất`
+    `${home} vs ${away} supercomputer prediction probability score`
   ];
 
-  const queries = [...preferredQueries, ...generalQueries];
-
   const packs = await Promise.allSettled(
-    queries.map(q => tavilySearch(q, 6))
+    queries.map(q => tavilySearch(q, 5))
   );
 
   const results = [];
@@ -481,65 +819,35 @@ async function autoExpertSearch(home, away, league, date) {
     results.push(...(p.value.results || []));
   }
 
-  const preferredDomains = ["adidas-fifa.com", "thethao24h.info"];
-
   const deduped = uniqByUrl(results)
-    .filter(r => {
-      const blob = `${r.title} ${r.snippet} ${r.url}`;
-      return textHasTeam(blob, home) && textHasTeam(blob, away);
-    })
     .map(r => {
+      const u = fold(r.url || "");
+      const blob = `${r.title} ${r.snippet} ${r.url}`;
       let boost = 0;
-      const u = lower(r.url || "");
-      const blob = `${r.title} ${r.snippet}`;
 
-      if (preferredDomains.some(d => u.includes(d))) boost += 1.5;
-      if (containsAny(blob, ["siêu máy tính", "sieu may tinh", "supercomputer", "probability", "xác suất", "xac suat"])) boost += 1.1;
-      if (containsAny(blob, ["soi kèo", "soi keo", "nhận định", "nhan dinh", "prediction", "preview"])) boost += 0.8;
+      if (isTrustedDomain(r.url)) boost += 1.2;
+      if (textHasBothTeams(blob, home, away)) boost += 1.5;
+      if (isSuperComputerUrl(r.url)) boost += 0.7;
+      if (containsAny(blob, ["soi kèo", "soi keo", "nhận định", "nhan dinh", "prediction", "preview"])) boost += 0.6;
+      if (isKnownCategoryUrl(r.url)) boost -= 0.8;
 
-      return { ...r, localBoost: boost };
+      return { ...r, localBoost: boost, foldedUrl: u };
     })
-    .sort((a, b) => (clamp(b.localBoost, 0, 99) + clamp(b.score, 0, 99)) - (clamp(a.localBoost, 0, 99) + clamp(a.score, 0, 99)))
-    .slice(0, 10);
+    .sort((a, b) => (clamp(b.localBoost, -5, 99) + clamp(b.score, 0, 99)) - (clamp(a.localBoost, -5, 99) + clamp(a.score, 0, 99)))
+    .slice(0, 14);
 
   const pageTexts = await Promise.all(
-    deduped.slice(0, 8).map(r => fetchPageText(r.url))
+    deduped.slice(0, 10).map(r => fetchPageText(r.url))
   );
 
   const sources = deduped.map((r, i) => {
     const text = pageTexts[i] || r.snippet || "";
-    const blob = `${r.title} ${r.url} ${text}`;
-
-    let type = "expert";
-
-    if (
-      containsAny(blob, [
-        "supercomputer",
-        "siêu máy tính",
-        "sieu may tinh",
-        "probability",
-        "xác suất",
-        "xac suat",
-        "machine learning",
-        "monte carlo"
-      ])
-    ) {
-      type = "supercomputer";
-    }
-
-    if (lower(r.url || "").includes("adidas-fifa.com")) {
-      type = type === "supercomputer" ? "supercomputer_preferred" : "expert_preferred";
-    }
-
-    if (lower(r.url || "").includes("thethao24h.info")) {
-      type = type === "supercomputer" ? "supercomputer_preferred" : "expert_preferred";
-    }
 
     return parseExpertSource({
       title: r.title,
       url: r.url,
       text,
-      type
+      type: "auto"
     }, home, away);
   });
 
@@ -557,8 +865,8 @@ async function autoExpertSearch(home, away, league, date) {
 
   return {
     ...consensus,
-    preferredDomains,
-    methodologySource: "adidas-fifa.com/may-tinh-du-doan-bong-da",
+    whitelist: expertSites,
+    methodologySource: "Safe Expert Consensus V4.2",
     rawAnswer: answers.join(" ").slice(0, 1500)
   };
 }
@@ -588,7 +896,7 @@ function looksLikeRealLineup(chunk = "") {
 
   if (!text || text.length < 80) return false;
 
-  const lowerText = lower(text);
+  const lowerText = fold(text);
 
   const onlyHeading =
     text.length < 180 &&
@@ -612,8 +920,7 @@ function looksLikeRealLineup(chunk = "") {
   const hasPositionWords = containsAny(lowerText, [
     "gk", "goalkeeper", "defenders", "midfielders", "forwards",
     "df:", "mf:", "fw:",
-    "thủ môn", "hau ve", "tiền vệ", "tiền đạo",
-    "thu mon", "hậu vệ", "tien ve", "tien dao"
+    "thu mon", "hau ve", "tien ve", "tien dao"
   ]);
 
   const nameMatches = text.match(/\b[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\s+[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\b/g) || [];
@@ -685,7 +992,7 @@ function webLineupFallback(home, away, sourceText, consensus) {
       }
     }
 
-    const idx = lower(text).indexOf(lower(teamRaw));
+    const idx = fold(text).indexOf(fold(teamRaw));
 
     if (idx >= 0) {
       const chunk = cleanLineupChunk(text.slice(Math.max(0, idx - 400), idx + 1800));
@@ -792,11 +1099,11 @@ async function findFixture(home, away) {
 
   const data = await apiFootball(`/fixtures?team=${homeId}&next=15`);
   const rows = data?.response || [];
-  const awayLower = lower(away);
+  const awayLower = fold(away);
 
   return rows.find(f => {
-    const h = lower(f?.teams?.home?.name);
-    const a = lower(f?.teams?.away?.name);
+    const h = fold(f?.teams?.home?.name);
+    const a = fold(f?.teams?.away?.name);
 
     return h.includes(awayLower) || a.includes(awayLower) || awayLower.includes(h) || awayLower.includes(a);
   }) || rows[0] || null;
@@ -824,17 +1131,17 @@ async function footballStructured(home, away) {
     const awayName = fixture?.teams?.away?.name || away;
 
     const homeInj = injRows
-      .filter(x => lower(x?.team?.name).includes(lower(homeName)) || lower(homeName).includes(lower(x?.team?.name)))
+      .filter(x => fold(x?.team?.name).includes(fold(homeName)) || fold(homeName).includes(fold(x?.team?.name)))
       .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
       .slice(0, 6);
 
     const awayInj = injRows
-      .filter(x => lower(x?.team?.name).includes(lower(awayName)) || lower(awayName).includes(lower(x?.team?.name)))
+      .filter(x => fold(x?.team?.name).includes(fold(awayName)) || fold(awayName).includes(fold(x?.team?.name)))
       .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
       .slice(0, 6);
 
-    const homeLine = lineRows.find(x => lower(x?.team?.name).includes(lower(homeName)));
-    const awayLine = lineRows.find(x => lower(x?.team?.name).includes(lower(awayName)));
+    const homeLine = lineRows.find(x => fold(x?.team?.name).includes(fold(homeName)));
+    const awayLine = lineRows.find(x => fold(x?.team?.name).includes(fold(awayName)));
 
     return {
       fixtureId,
@@ -891,10 +1198,11 @@ function scoreContextFromText(text = "") {
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    name: "Soi Kèo AI Research API V4.1 Full Clean",
+    name: "Soi Kèo AI Research API V4.2 Safe Expert Consensus",
     endpoint: "/api/research",
     tavily: Boolean(process.env.TAVILY_API_KEY),
-    apiFootball: Boolean(process.env.API_FOOTBALL_KEY)
+    apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
+    safeExpertConsensus: true
   });
 });
 
@@ -926,13 +1234,16 @@ app.post("/api/research", async (req, res) => {
       jobs.push(Promise.resolve({
         status: "off",
         sourceCount: 0,
+        readSourceCount: 0,
+        weakIgnored: 0,
         winnerLean: "neutral",
         hdcLean: "neutral",
         ouLean: "neutral",
         confidence: 0,
         commonScores: [],
         summary: "Tự tìm chuyên gia đang tắt.",
-        sources: []
+        sources: [],
+        votingSources: []
       }));
     }
 
@@ -957,8 +1268,8 @@ app.post("/api/research", async (req, res) => {
       : autoConsensus;
 
     combinedConsensus.rawAnswer = autoConsensus.rawAnswer || "";
-    combinedConsensus.preferredDomains = autoConsensus.preferredDomains || [];
-    combinedConsensus.methodologySource = autoConsensus.methodologySource || "";
+    combinedConsensus.whitelist = autoConsensus.whitelist || [];
+    combinedConsensus.methodologySource = "Safe Expert Consensus V4.2";
 
     const sourceText = [
       webInfo.answer,
@@ -1048,12 +1359,13 @@ app.post("/api/research", async (req, res) => {
       expertConsensus: {
         ...combinedConsensus,
         manualSourceCount: manualSources.length,
-        autoExpertEnabled
+        autoExpertEnabled,
+        safeMode: true
       },
       sources: [
         ...(webInfo.results || []),
         ...((combinedConsensus.sources || []).filter(s => s.url && !String(s.url).startsWith("tavily://")))
-      ].slice(0, 12)
+      ].slice(0, 14)
     });
   } catch (err) {
     res.status(500).json({
@@ -1064,5 +1376,5 @@ app.post("/api/research", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Soi Kèo AI Research API V4.1 chạy tại http://localhost:${PORT}`);
+  console.log(`Soi Kèo AI Research API V4.2 chạy tại http://localhost:${PORT}`);
 });
