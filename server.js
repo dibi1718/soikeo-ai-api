@@ -1,6 +1,11 @@
-// server.js - Soi Kèo AI Research API V4.3 Source Priority Gate
+// server.js - Soi Kèo AI Research API V4.3.1 Safe POST
 // Node.js 18+
-// package.json cần có: express, cors, dotenv và "type": "module"
+// package.json cần có:
+// {
+//   "type": "module",
+//   "scripts": { "start": "node server.js" },
+//   "dependencies": { "express": "^4.18.2", "cors": "^2.8.5", "dotenv": "^16.4.5" }
+// }
 
 import express from "express";
 import cors from "cors";
@@ -96,51 +101,46 @@ function normalizeTeamName(s = "") {
 ======================= */
 
 const TEAM_ALIAS_GROUPS = [
-  ["netherlands", "holland", "dutch", "ha lan", "hà lan", "loc da cam", "lốc da cam"],
-  ["sweden", "thuy dien", "thụy điển", "thuỵ điển", "thuy dien"],
-  ["poland", "ba lan"],
+  ["netherlands", "holland", "ha lan", "hà lan", "loc da cam", "lốc da cam"],
+  ["sweden", "thuy dien", "thụy điển", "thuỵ điển"],
+  ["poland", "ba lan", "ba lan"],
   ["northern ireland", "bac ireland", "bắc ireland"],
   ["germany", "duc", "đức"],
+  ["ivory coast", "cote d ivoire", "côte d’ivoire", "bo bien nga", "bờ biển ngà"],
   ["usa", "united states", "united states of america", "my", "mỹ", "hoa ky", "hoa kỳ"],
   ["turkey", "turkiye", "türkiye", "tho nhi ky", "thổ nhĩ kỳ"],
   ["bosnia", "bosnia and herzegovina", "bosnia herzegovina"],
-  ["ivory coast", "cote d ivoire", "côte d’ivoire", "bo bien nga", "bờ biển ngà"],
   ["czech republic", "czechia", "sec", "séc"],
   ["south korea", "korea republic", "han quoc", "hàn quốc"],
   ["north korea", "trieu tien", "triều tiên"],
   ["japan", "nhat ban", "nhật bản"],
   ["china", "trung quoc", "trung quốc"],
   ["brazil", "brasil", "braxin"],
+  ["haiti", "haiti"],
+  ["scotland", "scotland", "to cach lan", "tô cách lan"],
+  ["morocco", "ma roc", "ma rốc"],
   ["argentina", "argentine", "ac hen ti na", "ác hen ti na"],
   ["spain", "tay ban nha", "tây ban nha"],
   ["france", "phap", "pháp"],
-  ["italy", "italia", "y", "ý"],
+  ["italy", "italia"],
   ["england", "anh", "tam su", "tam sư"],
   ["portugal", "bo dao nha", "bồ đào nha"],
   ["belgium", "bi", "bỉ"],
-  ["croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia"],
-  ["croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia", "croatia"],
-  ["croatia", "hrvatska", "croatia", "croatia", "croatia", "croatia"],
+  ["croatia", "hrvatska", "croatia"],
   ["morocco", "ma roc", "ma rốc"],
-  ["mexico", "mexico", "me xi co", "mê xi cô"],
-  ["canada", "canada", "ca na da"],
+  ["mexico", "me xi co", "mê xi cô"],
+  ["canada", "ca na da"],
   ["paraguay", "paraguay"],
   ["uruguay", "uruguay"],
   ["colombia", "colombia"],
-  ["chile", "chile"],
-  ["ecuador", "ecuador"],
-  ["peru", "peru"],
   ["australia", "uc", "úc"],
-  ["new zealand", "new zealand", "tan tay lan", "tân tây lan"],
   ["switzerland", "thuy si", "thụy sĩ", "thuỵ sĩ"],
   ["austria", "ao", "áo"],
   ["norway", "na uy"],
   ["denmark", "dan mach", "đan mạch"],
   ["finland", "phan lan", "phần lan"],
-  ["scotland", "scotland", "to cach lan", "tô cách lan"],
-  ["wales", "wales", "xu wales"],
-  ["ireland", "republic of ireland", "ireland", "ai len", "ái len"],
-  ["romania", "romania", "rumani"],
+  ["ireland", "republic of ireland", "ai len", "ái len"],
+  ["romania", "rumani"],
   ["serbia", "serbia"],
   ["slovakia", "slovakia"],
   ["slovenia", "slovenia"],
@@ -155,20 +155,23 @@ const TEAM_ALIAS_GROUPS = [
   ["algeria", "algeria"],
   ["tunisia", "tunisia"],
   ["qatar", "qatar"],
-  ["saudi arabia", "saudi", "arab saudi", "ả rập xê út"],
+  ["saudi arabia", "saudi", "arab saudi"],
   ["iran", "iran"],
   ["iraq", "iraq"],
-  ["uae", "united arab emirates", "cac tieu vuong quoc a rap thong nhat"],
+  ["uae", "united arab emirates"],
   ["thailand", "thai lan", "thái lan"],
   ["vietnam", "viet nam", "việt nam"],
   ["indonesia", "indonesia"],
   ["malaysia", "malaysia"],
   ["singapore", "singapore"],
   ["philippines", "philippines"],
-  ["haiti", "haiti"],
   ["jamaica", "jamaica"],
   ["panama", "panama"],
-  ["costa rica", "costa rica"]
+  ["costa rica", "costa rica"],
+  ["curacao", "curaçao"],
+  ["ecuador", "ecuador"],
+  ["cape verde", "cape verde"],
+  ["new zealand", "tan tay lan", "tân tây lan"]
 ];
 
 function aliasSetFor(name = "") {
@@ -181,13 +184,20 @@ function aliasSetFor(name = "") {
   for (const tok of tokens) set.add(tok);
 
   for (const group of TEAM_ALIAS_GROUPS) {
-    const folded = group.map(x => normalizeTeamName(x));
-    if (folded.includes(n) || folded.some(x => x && n.includes(x)) || folded.some(x => x && x.includes(n))) {
-      for (const a of folded) if (a) set.add(a);
+    const folded = group.map(x => normalizeTeamName(x)).filter(Boolean);
+
+    if (
+      folded.includes(n) ||
+      folded.some(x => x.length >= 3 && n.includes(x)) ||
+      folded.some(x => x.length >= 3 && x.includes(n))
+    ) {
+      for (const a of folded) {
+        if (a.length >= 3) set.add(a);
+      }
     }
   }
 
-  return [...set].filter(x => x.length >= 2);
+  return [...set].filter(x => x.length >= 3);
 }
 
 function textHasTeam(text = "", team = "") {
@@ -196,12 +206,7 @@ function textHasTeam(text = "", team = "") {
 
   for (const a of aliases) {
     if (!a) continue;
-    if (a.length <= 2) {
-      const re = new RegExp(`\\b${escapeRegExp(a)}\\b`, "i");
-      if (re.test(t)) return true;
-    } else if (t.includes(a)) {
-      return true;
-    }
+    if (t.includes(a)) return true;
   }
 
   return false;
@@ -281,6 +286,7 @@ function isSuperComputerUrl(url = "", text = "") {
   return (
     u.includes("du-doan-bong-da") ||
     u.includes("sieu-may-tinh") ||
+    u.includes("siêu máy tính") ||
     u.includes("supercomputer") ||
     u.includes("probability") ||
     u.includes("xác suất") ||
@@ -350,15 +356,13 @@ function detectOU(text = "") {
   let under = 0;
 
   const overWords = [
-    "over", "over 1.5", "over 2.5", "over 3.5",
-    "tai", "tài", "mưa bàn thắng", "mua ban thang", "nhiều bàn", "nhieu ban",
+    "over", "tai", "tài", "mưa bàn thắng", "mua ban thang", "nhiều bàn", "nhieu ban",
     "high scoring", "goals expected", "open game", "attacking game",
     "both teams to score", "btts"
   ];
 
   const underWords = [
-    "under", "under 1.5", "under 2.5", "under 3.5",
-    "xiu", "xỉu", "it ban", "ít bàn",
+    "under", "xiu", "xỉu", "it ban", "ít bàn",
     "low scoring", "tight game", "cautious", "defensive", "low block"
   ];
 
@@ -388,15 +392,25 @@ function detectWinner(text = "", home = "", away = "") {
   const awayAliases = aliasSetFor(away);
 
   for (const h of homeAliases) {
-    if (!h) continue;
-    if (t.includes(`${h} thang`) || t.includes(`${h} thắng`) || t.includes(`${h} win`) || t.includes(`${h} to win`) || t.includes(`${h} victory`)) {
+    if (
+      t.includes(`${h} thang`) ||
+      t.includes(`${h} thắng`) ||
+      t.includes(`${h} win`) ||
+      t.includes(`${h} to win`) ||
+      t.includes(`${h} victory`)
+    ) {
       hs += 3;
     }
   }
 
   for (const a of awayAliases) {
-    if (!a) continue;
-    if (t.includes(`${a} thang`) || t.includes(`${a} thắng`) || t.includes(`${a} win`) || t.includes(`${a} to win`) || t.includes(`${a} victory`)) {
+    if (
+      t.includes(`${a} thang`) ||
+      t.includes(`${a} thắng`) ||
+      t.includes(`${a} win`) ||
+      t.includes(`${a} to win`) ||
+      t.includes(`${a} victory`)
+    ) {
       as += 3;
     }
   }
@@ -470,12 +484,11 @@ function detectSourceType(url = "", text = "") {
 }
 
 /* =======================
-   SOURCE QUALITY V4.3
+   SOURCE QUALITY
 ======================= */
 
 function qualitySource({ title = "", url = "", text = "", manualPriority = false, fromManualTitle = false }, home = "", away = "") {
   const domain = domainOf(url);
-  const titleBlob = `${title} ${url}`;
   const all = `${title}. ${url}. ${text}`;
 
   const titleBoth = textHasBothTeams(title, home, away);
@@ -621,8 +634,6 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
     urlBoth,
     isCategory,
     hardReject,
-    titleMismatch,
-    urlMismatch,
     quality: q,
     qualityLabel,
     voteAllowed,
@@ -794,16 +805,16 @@ function buildConsensus(items = [], home = "", away = "") {
     ? agreements.reduce((a, b) => a + b, 0) / agreements.length
     : 0;
 
-  const hasRealKèo = voting.some(s => s.hdcLean !== "neutral" || s.ouLean !== "neutral");
+  const hasRealKeo = voting.some(s => s.hdcLean !== "neutral" || s.ouLean !== "neutral");
   const hasScoreOrProb = voting.some(s => s.score || s.hasProbability);
 
   let appConfidence = 0;
 
-  if (manualVoting >= 2 && voting.length >= 3 && strongCount >= 2 && avgAgreement >= 0.68 && hasRealKèo) {
+  if (manualVoting >= 2 && voting.length >= 3 && strongCount >= 2 && avgAgreement >= 0.68 && hasRealKeo) {
     appConfidence = 0.66;
-  } else if (voting.length >= 5 && strongCount >= 3 && avgAgreement >= 0.70 && hasRealKèo) {
+  } else if (voting.length >= 5 && strongCount >= 3 && avgAgreement >= 0.70 && hasRealKeo) {
     appConfidence = 0.62;
-  } else if (voting.length >= 3 && mediumCount >= 3 && avgAgreement >= 0.62 && hasRealKèo) {
+  } else if (voting.length >= 3 && mediumCount >= 3 && avgAgreement >= 0.62 && hasRealKeo) {
     appConfidence = 0.48;
   } else if (voting.length >= 2 && avgAgreement >= 0.58) {
     appConfidence = 0.34;
@@ -811,7 +822,7 @@ function buildConsensus(items = [], home = "", away = "") {
     appConfidence = 0.22;
   }
 
-  if (!hasRealKèo) appConfidence = Math.min(appConfidence, 0.28);
+  if (!hasRealKeo) appConfidence = Math.min(appConfidence, 0.28);
   if (!hasScoreOrProb && superCount > 0) appConfidence = Math.min(appConfidence, 0.42);
   if (avgQuality < 55) appConfidence = Math.min(appConfidence, 0.26);
 
@@ -864,7 +875,7 @@ function buildConsensus(items = [], home = "", away = "") {
     mediumCount,
     superComputerSourceCount: superCount,
     commonScores: scores,
-    summary: `Source Priority Gate V4.3: ${summaryParts.join("; ")}. ${hardRejected ? `Đã loại ${hardRejected} nguồn sai cặp.` : ""} ${weakIgnored ? `Bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
+    summary: `Source Priority Gate V4.3.1: ${summaryParts.join("; ")}. ${hardRejected ? `Đã loại ${hardRejected} nguồn sai cặp.` : ""} ${weakIgnored ? `Bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
     votes: {
       winner: winner.score,
       hdc: hdc.score,
@@ -877,7 +888,7 @@ function buildConsensus(items = [], home = "", away = "") {
 }
 
 /* =======================
-   TAVILY / FETCH
+   TAVILY + FETCH SAFE
 ======================= */
 
 async function tavilySearch(query, maxResults = 6) {
@@ -916,6 +927,18 @@ async function tavilySearch(query, maxResults = 6) {
       score: r.score || 0
     }))
   };
+}
+
+async function safeTavilySearch(query, maxResults = 6) {
+  try {
+    return await tavilySearch(query, maxResults);
+  } catch (e) {
+    return {
+      answer: "",
+      results: [],
+      error: e.message || "Tavily failed"
+    };
+  }
 }
 
 async function fetchPageText(url) {
@@ -957,7 +980,7 @@ async function fetchPageText(url) {
 }
 
 /* =======================
-   EXPERT SEARCH V4.3
+   EXPERT SEARCH SAFE
 ======================= */
 
 async function autoExpertSearch(home, away, league, date, manualMode = false) {
@@ -977,7 +1000,7 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
     : [...preferredQueries, ...openQueries];
 
   const packs = await Promise.allSettled(
-    queries.map(q => tavilySearch(q, manualMode ? 4 : 5))
+    queries.map(q => safeTavilySearch(q, manualMode ? 4 : 5))
   );
 
   const results = [];
@@ -1037,9 +1060,33 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
   return {
     ...consensus,
     whitelist: PREFERRED_DOMAINS,
-    methodologySource: "Source Priority Gate V4.3",
+    methodologySource: "Source Priority Gate V4.3.1",
     rawAnswer: answers.join(" ").slice(0, 1500)
   };
+}
+
+async function safeAutoExpertSearch(home, away, league, date, manualMode = false) {
+  try {
+    return await autoExpertSearch(home, away, league, date, manualMode);
+  } catch (e) {
+    return {
+      status: "auto_failed",
+      sourcePriorityGate: true,
+      sourceCount: 0,
+      readSourceCount: 0,
+      weakIgnored: 0,
+      hardRejected: 0,
+      winnerLean: "neutral",
+      hdcLean: "neutral",
+      ouLean: "neutral",
+      confidence: 0,
+      commonScores: [],
+      summary: `Auto expert lỗi nhưng API không sập: ${e.message || "unknown"}`,
+      sources: [],
+      votingSources: [],
+      rawAnswer: ""
+    };
+  }
 }
 
 async function parseManualInputs(lines = [], type, home, away) {
@@ -1061,7 +1108,8 @@ async function parseManualInputs(lines = [], type, home, away) {
   const titleSearches = await Promise.allSettled(
     titleQueries.map(async q => {
       const searchQuery = `"${q}" ${home} ${away}`;
-      const pack = await tavilySearch(searchQuery, 3);
+      const pack = await safeTavilySearch(searchQuery, 3);
+
       const results = uniqByUrl(pack.results || [])
         .filter(r => !opponentMismatchInTitle(r.title, home, away))
         .slice(0, 2);
@@ -1099,6 +1147,14 @@ async function parseManualInputs(lines = [], type, home, away) {
   }
 
   return [...directSources, ...titleSources];
+}
+
+async function safeParseManualInputs(lines = [], type, home, away) {
+  try {
+    return await parseManualInputs(lines, type, home, away);
+  } catch {
+    return [];
+  }
 }
 
 /* =======================
@@ -1253,21 +1309,25 @@ function webLineupFallback(home, away, sourceText, consensus) {
 }
 
 /* =======================
-   API-FOOTBALL
+   API-FOOTBALL SAFE
 ======================= */
 
 async function apiFootball(path) {
-  const key = process.env.API_FOOTBALL_KEY;
+  try {
+    const key = process.env.API_FOOTBALL_KEY;
 
-  if (!key) return null;
+    if (!key) return null;
 
-  const res = await fetch(`https://v3.football.api-sports.io${path}`, {
-    headers: { "x-apisports-key": key }
-  });
+    const res = await fetch(`https://v3.football.api-sports.io${path}`, {
+      headers: { "x-apisports-key": key }
+    });
 
-  if (!res.ok) return null;
+    if (!res.ok) return null;
 
-  return res.json();
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 function teamSearchCandidates(name = "") {
@@ -1341,48 +1401,52 @@ async function findFixture(home, away, date = "") {
 async function footballStructured(home, away, date = "") {
   if (!process.env.API_FOOTBALL_KEY) return null;
 
+  const fixture = await findFixture(home, away, date);
+
+  if (!fixture?.fixture?.id) return null;
+
+  const fixtureId = fixture.fixture.id;
+
+  const [injuries, lineups] = await Promise.all([
+    apiFootball(`/injuries?fixture=${fixtureId}`),
+    apiFootball(`/fixtures/lineups?fixture=${fixtureId}`)
+  ]);
+
+  const injRows = injuries?.response || [];
+  const lineRows = lineups?.response || [];
+
+  const homeName = fixture?.teams?.home?.name || home;
+  const awayName = fixture?.teams?.away?.name || away;
+
+  const homeInj = injRows
+    .filter(x => textHasTeam(x?.team?.name || "", homeName))
+    .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
+    .slice(0, 6);
+
+  const awayInj = injRows
+    .filter(x => textHasTeam(x?.team?.name || "", awayName))
+    .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
+    .slice(0, 6);
+
+  const homeLine = lineRows.find(x => textHasTeam(x?.team?.name || "", homeName));
+  const awayLine = lineRows.find(x => textHasTeam(x?.team?.name || "", awayName));
+
+  return {
+    fixtureId,
+    homeName,
+    awayName,
+    homeInjuries: homeInj,
+    awayInjuries: awayInj,
+    homeFormation: homeLine?.formation || "",
+    awayFormation: awayLine?.formation || "",
+    homeXI: (homeLine?.startXI || []).map(x => x?.player?.name).filter(Boolean).slice(0, 11),
+    awayXI: (awayLine?.startXI || []).map(x => x?.player?.name).filter(Boolean).slice(0, 11)
+  };
+}
+
+async function safeFootballStructured(home, away, date = "") {
   try {
-    const fixture = await findFixture(home, away, date);
-
-    if (!fixture?.fixture?.id) return null;
-
-    const fixtureId = fixture.fixture.id;
-
-    const [injuries, lineups] = await Promise.all([
-      apiFootball(`/injuries?fixture=${fixtureId}`),
-      apiFootball(`/fixtures/lineups?fixture=${fixtureId}`)
-    ]);
-
-    const injRows = injuries?.response || [];
-    const lineRows = lineups?.response || [];
-
-    const homeName = fixture?.teams?.home?.name || home;
-    const awayName = fixture?.teams?.away?.name || away;
-
-    const homeInj = injRows
-      .filter(x => textHasTeam(x?.team?.name || "", homeName))
-      .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
-      .slice(0, 6);
-
-    const awayInj = injRows
-      .filter(x => textHasTeam(x?.team?.name || "", awayName))
-      .map(x => `${x?.player?.name || "Cầu thủ"}: ${x?.player?.reason || "vắng/đau"}`)
-      .slice(0, 6);
-
-    const homeLine = lineRows.find(x => textHasTeam(x?.team?.name || "", homeName));
-    const awayLine = lineRows.find(x => textHasTeam(x?.team?.name || "", awayName));
-
-    return {
-      fixtureId,
-      homeName,
-      awayName,
-      homeInjuries: homeInj,
-      awayInjuries: awayInj,
-      homeFormation: homeLine?.formation || "",
-      awayFormation: awayLine?.formation || "",
-      homeXI: (homeLine?.startXI || []).map(x => x?.player?.name).filter(Boolean).slice(0, 11),
-      awayXI: (awayLine?.startXI || []).map(x => x?.player?.name).filter(Boolean).slice(0, 11)
-    };
+    return await footballStructured(home, away, date);
   } catch {
     return null;
   }
@@ -1427,12 +1491,13 @@ function scoreContextFromText(text = "") {
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    name: "Soi Kèo AI Research API V4.3 Source Priority Gate",
+    name: "Soi Kèo AI Research API V4.3.1 Safe POST",
     endpoint: "/api/research",
     tavily: Boolean(process.env.TAVILY_API_KEY),
     apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
     safeExpertConsensus: true,
-    sourcePriorityGate: true
+    sourcePriorityGate: true,
+    safePost: true
   });
 });
 
@@ -1449,6 +1514,7 @@ app.post("/api/research", async (req, res) => {
 
     const expertLinks = Array.isArray(req.body.expertLinks) ? req.body.expertLinks : [];
     const superComputerLinks = Array.isArray(req.body.superComputerLinks) ? req.body.superComputerLinks : [];
+
     const manualInputs = [...expertLinks, ...superComputerLinks].map(clean).filter(Boolean);
     const manualMode = manualInputs.length > 0;
 
@@ -1456,41 +1522,36 @@ app.post("/api/research", async (req, res) => {
 
     const teamNewsQuery = `${home} vs ${away} ${league} ${date} predicted lineups injuries suspensions team news preview tactical style`;
 
-    const jobs = [
-      tavilySearch(teamNewsQuery, 6),
-      footballStructured(home, away, date)
-    ];
-
-    if (autoExpertEnabled) {
-      jobs.push(autoExpertSearch(home, away, league, date, manualMode));
-    } else {
-      jobs.push(Promise.resolve({
-        status: "off",
-        sourceCount: 0,
-        readSourceCount: 0,
-        weakIgnored: 0,
-        hardRejected: 0,
-        winnerLean: "neutral",
-        hdcLean: "neutral",
-        ouLean: "neutral",
-        confidence: 0,
-        commonScores: [],
-        summary: "Tự tìm chuyên gia đang tắt.",
-        sources: [],
-        votingSources: []
-      }));
-    }
-
-    jobs.push(parseManualInputs(expertLinks, "expert_manual", home, away));
-    jobs.push(parseManualInputs(superComputerLinks, "supercomputer_manual", home, away));
-
     const [
       webInfo,
       structured,
       autoConsensus,
       manualExpertSources,
       manualSuperSources
-    ] = await Promise.all(jobs);
+    ] = await Promise.all([
+      safeTavilySearch(teamNewsQuery, 6),
+      safeFootballStructured(home, away, date),
+      autoExpertEnabled
+        ? safeAutoExpertSearch(home, away, league, date, manualMode)
+        : Promise.resolve({
+            status: "off",
+            sourceCount: 0,
+            readSourceCount: 0,
+            weakIgnored: 0,
+            hardRejected: 0,
+            winnerLean: "neutral",
+            hdcLean: "neutral",
+            ouLean: "neutral",
+            confidence: 0,
+            commonScores: [],
+            summary: "Tự tìm chuyên gia đang tắt.",
+            sources: [],
+            votingSources: [],
+            rawAnswer: ""
+          }),
+      safeParseManualInputs(expertLinks, "expert_manual", home, away),
+      safeParseManualInputs(superComputerLinks, "supercomputer_manual", home, away)
+    ]);
 
     const manualSources = [
       ...(manualExpertSources || []),
@@ -1506,7 +1567,7 @@ app.post("/api/research", async (req, res) => {
 
     combinedConsensus.rawAnswer = autoConsensus.rawAnswer || "";
     combinedConsensus.whitelist = PREFERRED_DOMAINS;
-    combinedConsensus.methodologySource = "Source Priority Gate V4.3";
+    combinedConsensus.methodologySource = "Source Priority Gate V4.3.1";
     combinedConsensus.manualSourceCount = manualSources.length;
     combinedConsensus.autoExpertEnabled = autoExpertEnabled;
     combinedConsensus.manualMode = manualMode;
@@ -1599,7 +1660,8 @@ app.post("/api/research", async (req, res) => {
       expertConsensus: {
         ...combinedConsensus,
         safeMode: true,
-        sourcePriorityGate: true
+        sourcePriorityGate: true,
+        safePost: true
       },
       sources: [
         ...(webInfo.results || []),
@@ -1607,13 +1669,42 @@ app.post("/api/research", async (req, res) => {
       ].slice(0, 14)
     });
   } catch (err) {
-    res.status(500).json({
-      error: "Research API failed",
-      message: err.message
+    res.status(200).json({
+      summary: "API gặp lỗi nội bộ nhưng đã trả fallback an toàn, app không bị sập.",
+      homeAdvantage: 1,
+      tempo: 0,
+      homeIssues: 0,
+      awayIssues: 0,
+      injuriesHome: "API lỗi, chưa có dữ liệu chấn thương.",
+      injuriesAway: "API lỗi, chưa có dữ liệu chấn thương.",
+      lineupHome: "API lỗi, chưa có đội hình.",
+      lineupAway: "API lỗi, chưa có đội hình.",
+      styleHome: "Fallback an toàn.",
+      styleAway: "Fallback an toàn.",
+      flags: {},
+      expertConsensus: {
+        status: "server_safe_fallback",
+        safeMode: true,
+        sourcePriorityGate: true,
+        safePost: true,
+        sourceCount: 0,
+        readSourceCount: 0,
+        weakIgnored: 0,
+        hardRejected: 0,
+        winnerLean: "neutral",
+        hdcLean: "neutral",
+        ouLean: "neutral",
+        confidence: 0,
+        commonScores: [],
+        summary: `Server fallback an toàn: ${err.message || "unknown error"}`,
+        sources: [],
+        votingSources: []
+      },
+      sources: []
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Soi Kèo AI Research API V4.3 chạy tại http://localhost:${PORT}`);
+  console.log(`Soi Kèo AI Research API V4.3.1 chạy tại http://localhost:${PORT}`);
 });
