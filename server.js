@@ -622,7 +622,202 @@ app.post("/api/research", async (req, res) => {
 
     const auto = scoreContextFromText(sourceText);
 
-    function webLineupFallback(home, away, sourceText, consensus) {
+    function escapeRegExp(s = "") {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function looksLikeRealLineup(chunk = "") {
+  const text = clean(chunk);
+
+  if (!text || text.length < 80) return false;
+
+  const lowerText = lower(text);
+
+  /*
+    Loại các đoạn chỉ là tiêu đề như:
+    "Predicted lineup and team news"
+    "Lineups & Injury News"
+  */
+  const onlyHeading =
+    text.length < 180 &&
+    containsAny(lowerText, [
+      "predicted lineup and team news",
+      "lineups & injury news",
+      "starting xis",
+      "lineups widget",
+      "team news"
+    ]) &&
+    !text.includes(",") &&
+    !text.includes(";");
+
+  if (onlyHeading) return false;
+
+  /*
+    Đội hình thật thường có:
+    - nhiều dấu phẩy, hoặc
+    - formation + nhiều tên riêng, hoặc
+    - GK/DF/MF/FW
+  */
+  const commaCount = (text.match(/,/g) || []).length;
+  const semicolonCount = (text.match(/;/g) || []).length;
+
+  const hasFormation = /\b[3-5]-[2-5]-[1-4]\b/.test(text);
+  const hasPositionWords = containsAny(lowerText, [
+    "gk", "goalkeeper", "defenders", "midfielders", "forwards",
+    "df:", "mf:", "fw:", "thủ môn", "hau ve", "tiền vệ", "tiền đạo",
+    "thu mon", "hậu vệ", "tien ve", "tien dao"
+  ]);
+
+  /*
+    Đếm cụm giống tên cầu thủ: 2 từ viết hoa gần nhau.
+    Ví dụ: Alisson Becker, Lionel Messi, Arda Guler
+  */
+  const nameMatches = text.match(/\b[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\s+[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\b/g) || [];
+  const nameCount = new Set(nameMatches).size;
+
+  if (commaCount >= 5 && nameCount >= 4) return true;
+  if (semicolonCount >= 4 && nameCount >= 4) return true;
+  if (hasFormation && nameCount >= 5) return true;
+  if (hasPositionWords && nameCount >= 5) return true;
+
+  return false;
+}
+
+function cleanLineupChunk(chunk = "") {
+  let text = clean(chunk);
+
+  text = text
+    .replace(/Predicted Lineups\s*&\s*Starting XIs/gi, "")
+    .replace(/Lineups\s*&\s*Injury News/gi, "")
+    .replace(/RotoWire Soccer Lineups Widget/gi, "")
+    .replace(/###/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.slice(0, 900);
+}
+
+function webLineupFallback(home, away, sourceText, consensus) {
+  const blob = clean([
+    sourceText || "",
+    consensus?.rawAnswer || "",
+    consensus?.summary || "",
+    ...(consensus?.sources || []).map(s => `${s.title || ""}. ${s.snippet || ""}`)
+  ].join(" "));
+
+  const text = blob.slice(0, 22000);
+
+  function findLineupForTeam(team) {
+    const teamRaw = clean(team);
+    const teamEsc = escapeRegExp(teamRaw);
+
+    const lineupWords = [
+      "predicted lineup",
+      "expected lineup",
+      "starting xi",
+      "starting xis",
+      "probable lineup",
+      "lineup",
+      "đội hình dự kiến",
+      "doi hinh du kien",
+      "đội hình ra sân",
+      "doi hinh ra san"
+    ];
+
+    const patterns = [
+      new RegExp(`${teamEsc}[^.]{0,180}(${lineupWords.join("|")})[^.]{0,1400}`, "i"),
+      new RegExp(`(${lineupWords.join("|")})[^.]{0,220}${teamEsc}[^.]{0,1400}`, "i"),
+      new RegExp(`${teamEsc}[^\\n]{0,1600}`, "i")
+    ];
+
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (!m || !m[0]) continue;
+
+      const chunk = cleanLineupChunk(m[0]);
+
+      if (looksLikeRealLineup(chunk)) {
+        return chunk;
+      }
+    }
+
+    /*
+      Thử cắt vùng quanh tên đội nếu bài có bảng đội hình gần đó.
+    */
+    const idx = lower(text).indexOf(lower(teamRaw));
+    if (idx >= 0) {
+      const chunk = cleanLineupChunk(text.slice(Math.max(0, idx - 400), idx + 1800));
+      if (
+        containsAny(chunk, [
+          "predicted lineup",
+          "expected lineup",
+          "starting xi",
+          "probable lineup",
+          "đội hình",
+          "doi hinh",
+          "lineup",
+          "gk",
+          "df",
+          "mf",
+          "fw"
+        ]) &&
+        looksLikeRealLineup(chunk)
+      ) {
+        return chunk;
+      }
+    }
+
+    return "";
+  }
+
+  function findInjuryForTeam(team) {
+    const teamRaw = clean(team);
+    const teamEsc = escapeRegExp(teamRaw);
+
+    const injuryWords = [
+      "injury",
+      "injuries",
+      "suspended",
+      "suspension",
+      "doubtful",
+      "out injured",
+      "chấn thương",
+      "chan thuong",
+      "treo giò",
+      "treo gio",
+      "vắng mặt",
+      "vang mat"
+    ];
+
+    const patterns = [
+      new RegExp(`${teamEsc}[^.]{0,220}(${injuryWords.join("|")})[^.]{0,1200}`, "i"),
+      new RegExp(`(${injuryWords.join("|")})[^.]{0,260}${teamEsc}[^.]{0,1200}`, "i")
+    ];
+
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (m && m[0]) {
+        const chunk = cleanLineupChunk(m[0]);
+
+        /*
+          Tránh bắt nhầm mỗi tiêu đề Injury News.
+        */
+        if (chunk.length > 120) {
+          return chunk.slice(0, 900);
+        }
+      }
+    }
+
+    return "";
+  }
+
+  return {
+    lineupHomeWeb: findLineupForTeam(home),
+    lineupAwayWeb: findLineupForTeam(away),
+    injuriesHomeWeb: findInjuryForTeam(home),
+    injuriesAwayWeb: findInjuryForTeam(away)
+  };
+}
   const blob = clean([
     sourceText || "",
     consensus?.rawAnswer || "",
@@ -698,7 +893,11 @@ let injuriesAway = webFallback.injuriesAwayWeb
 
 let lineupHome = webFallback.lineupHomeWeb
   ? `Dự kiến từ web: ${webFallback.lineupHomeWeb}`
-  : "Chưa có đội hình chính thức/dự kiến rõ ràng từ API/web.";
+  : "Chưa có đội hình chính thức/dự kiến đủ tên cầu thủ từ API/web.";
+
+let lineupAway = webFallback.lineupAwayWeb
+  ? `Dự kiến từ web: ${webFallback.lineupAwayWeb}`
+  : "Chưa có đội hình chính thức/dự kiến đủ tên cầu thủ từ API/web.";
 
 let lineupAway = webFallback.lineupAwayWeb
   ? `Dự kiến từ web: ${webFallback.lineupAwayWeb}`
