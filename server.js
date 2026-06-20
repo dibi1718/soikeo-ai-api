@@ -618,13 +618,91 @@ app.post("/api/research", async (req, res) => {
       combinedConsensus.summary,
       ...(combinedConsensus.sources || []).map(s => `${s.title}. ${s.snippet}`)
     ].join(" ");
+    const webFallback = webLineupFallback(home, away, sourceText, combinedConsensus);
 
     const auto = scoreContextFromText(sourceText);
 
-    let injuriesHome = "Chưa có dữ liệu chấn thương rõ ràng từ API.";
-    let injuriesAway = "Chưa có dữ liệu chấn thương rõ ràng từ API.";
-    let lineupHome = "Chưa có đội hình chính thức/dự kiến rõ ràng từ API.";
-    let lineupAway = "Chưa có đội hình chính thức/dự kiến rõ ràng từ API.";
+    function webLineupFallback(home, away, sourceText, consensus) {
+  const blob = clean([
+    sourceText || "",
+    consensus?.rawAnswer || "",
+    consensus?.summary || "",
+    ...(consensus?.sources || []).map(s => `${s.title || ""}. ${s.snippet || ""}`)
+  ].join(" "));
+
+  const text = blob.slice(0, 16000);
+
+  function findForTeam(team) {
+    const teamNorm = normalizeTeamName(team);
+    const teamRaw = clean(team);
+
+    const patterns = [
+      new RegExp(`${teamRaw}[^.]{0,120}(predicted lineup|expected lineup|starting xi|probable lineup|lineup|đội hình dự kiến|doi hinh du kien|đội hình ra sân|doi hinh ra san)[^.]{0,900}`, "i"),
+      new RegExp(`(predicted lineup|expected lineup|starting xi|probable lineup|lineup|đội hình dự kiến|doi hinh du kien|đội hình ra sân|doi hinh ra san)[^.]{0,180}${teamRaw}[^.]{0,900}`, "i"),
+      new RegExp(`${teamNorm}[^.]{0,120}(predicted lineup|expected lineup|starting xi|probable lineup|lineup)[^.]{0,900}`, "i")
+    ];
+
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (m && m[0]) {
+        return clean(m[0]).slice(0, 800);
+      }
+    }
+
+    const teamIdx = lower(text).indexOf(lower(teamRaw));
+    if (teamIdx >= 0) {
+      const chunk = text.slice(Math.max(0, teamIdx - 300), teamIdx + 1000);
+      if (containsAny(chunk, [
+        "predicted lineup", "expected lineup", "starting xi", "probable lineup",
+        "đội hình", "doi hinh", "lineup", "xi"
+      ])) {
+        return clean(chunk).slice(0, 800);
+      }
+    }
+
+    return "";
+  }
+
+  function findInjury(team) {
+    const teamRaw = clean(team);
+
+    const patterns = [
+      new RegExp(`${teamRaw}[^.]{0,160}(injury|injuries|suspended|suspension|doubtful|chấn thương|chan thuong|treo giò|treo gio|vắng mặt|vang mat)[^.]{0,900}`, "i"),
+      new RegExp(`(injury|injuries|suspended|suspension|doubtful|chấn thương|chan thuong|treo giò|treo gio|vắng mặt|vang mat)[^.]{0,180}${teamRaw}[^.]{0,900}`, "i")
+    ];
+
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (m && m[0]) {
+        return clean(m[0]).slice(0, 800);
+      }
+    }
+
+    return "";
+  }
+
+  return {
+    lineupHomeWeb: findForTeam(home),
+    lineupAwayWeb: findForTeam(away),
+    injuriesHomeWeb: findInjury(home),
+    injuriesAwayWeb: findInjury(away)
+  };
+}
+    let injuriesHome = webFallback.injuriesHomeWeb
+  ? `Dự kiến từ web: ${webFallback.injuriesHomeWeb}`
+  : "Chưa có dữ liệu chấn thương rõ ràng từ API/web.";
+
+let injuriesAway = webFallback.injuriesAwayWeb
+  ? `Dự kiến từ web: ${webFallback.injuriesAwayWeb}`
+  : "Chưa có dữ liệu chấn thương rõ ràng từ API/web.";
+
+let lineupHome = webFallback.lineupHomeWeb
+  ? `Dự kiến từ web: ${webFallback.lineupHomeWeb}`
+  : "Chưa có đội hình chính thức/dự kiến rõ ràng từ API/web.";
+
+let lineupAway = webFallback.lineupAwayWeb
+  ? `Dự kiến từ web: ${webFallback.lineupAwayWeb}`
+  : "Chưa có đội hình chính thức/dự kiến rõ ràng từ API/web.";
 
     if (structured) {
       if (structured.homeInjuries?.length) injuriesHome = structured.homeInjuries.join("; ");
