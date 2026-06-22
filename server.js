@@ -1,10 +1,14 @@
-// server.js - Soi Kèo AI Research API V4.3.1 Safe POST
+// server.js - Soi Kèo AI Research API V4.4 Source Split Voting
 // Node.js 18+
 // package.json cần có:
 // {
 //   "type": "module",
 //   "scripts": { "start": "node server.js" },
-//   "dependencies": { "express": "^4.18.2", "cors": "^2.8.5", "dotenv": "^16.4.5" }
+//   "dependencies": {
+//     "express": "^4.18.2",
+//     "cors": "^2.8.5",
+//     "dotenv": "^16.4.5"
+//   }
 // }
 
 import express from "express";
@@ -19,9 +23,9 @@ app.use(express.json({ limit: "4mb" }));
 
 const PORT = process.env.PORT || 3000;
 
-/* =======================
+/* =========================
    BASIC HELPERS
-======================= */
+========================= */
 
 function clean(s = "") {
   return String(s || "").replace(/\s+/g, " ").trim();
@@ -45,12 +49,19 @@ function containsAny(text = "", words = []) {
   return words.some(w => t.includes(fold(w)));
 }
 
-function escapeRegExp(s = "") {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function isUrl(s = "") {
   return /^https?:\/\//i.test(clean(s));
+}
+
+function domainOf(url = "") {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "").replace(/^m\./, "");
+  } catch {
+    if (String(url).startsWith("manual-title://")) return "manual-title";
+    if (String(url).startsWith("tavily://")) return "tavily";
+    return "unknown";
+  }
 }
 
 function uniqByUrl(items = []) {
@@ -67,112 +78,91 @@ function uniqByUrl(items = []) {
   return out;
 }
 
-function domainOf(url = "") {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace(/^www\./, "").replace(/^m\./, "");
-  } catch {
-    if (String(url).startsWith("tavily://")) return "tavily";
-    if (String(url).startsWith("manual-title://")) return "manual-title";
-    return "unknown";
-  }
+function getTavilyKey() {
+  return process.env.TAVILY_API_KEY || process.env.TAVILY_KEY || "";
 }
 
-function pathOf(url = "") {
-  try {
-    return new URL(url).pathname || "";
-  } catch {
-    return "";
-  }
+function getFootballKey() {
+  return (
+    process.env.API_FOOTBALL_KEY ||
+    process.env.APIFOOTBALL_KEY ||
+    process.env.API_FOOTBALL_API_KEY ||
+    process.env.API_SPORTS_KEY ||
+    ""
+  );
 }
+
+/* =========================
+   TEAM ALIAS
+========================= */
+
+const TEAM_ALIAS_GROUPS = [
+  ["netherlands", "holland", "ha lan", "hà lan", "loc da cam", "lốc da cam"],
+  ["sweden", "thuy dien", "thụy điển", "thuỵ điển"],
+  ["germany", "duc", "đức"],
+  ["ivory coast", "cote d ivoire", "côte d’ivoire", "bo bien nga", "bờ biển ngà"],
+  ["usa", "united states", "united states of america", "my", "mỹ", "hoa ky", "hoa kỳ"],
+  ["paraguay", "paraguay"],
+  ["australia", "uc", "úc"],
+  ["turkey", "turkiye", "türkiye", "tho nhi ky", "thổ nhĩ kỳ"],
+  ["brazil", "brasil", "braxin"],
+  ["morocco", "ma roc", "ma rốc"],
+  ["scotland", "to cach lan", "tô cách lan"],
+  ["haiti", "haiti"],
+  ["mexico", "me xi co", "mê xi cô"],
+  ["south korea", "korea republic", "han quoc", "hàn quốc"],
+  ["czechia", "czech republic", "sec", "séc"],
+  ["south africa", "nam phi"],
+  ["canada", "ca na da"],
+  ["bosnia", "bosnia and herzegovina", "bosnia herzegovina"],
+  ["qatar", "qatar"],
+  ["switzerland", "thuy si", "thụy sĩ", "thuỵ sĩ"],
+  ["japan", "nhat ban", "nhật bản"],
+  ["tunisia", "tunisia"],
+  ["ecuador", "ecuador"],
+  ["curacao", "curaçao"],
+  ["spain", "tay ban nha", "tây ban nha"],
+  ["uruguay", "uruguay"],
+  ["cape verde", "cape verde"],
+  ["saudi arabia", "saudi", "arab saudi"],
+  ["belgium", "bi", "bỉ"],
+  ["iran", "iran"],
+  ["new zealand", "tan tay lan", "tân tây lan"],
+  ["egypt", "ai cap", "ai cập"],
+  ["france", "phap", "pháp"],
+  ["senegal", "senegal"],
+  ["iraq", "iraq"],
+  ["norway", "na uy"],
+  ["argentina", "argentine", "ac hen ti na", "ác hen ti na"],
+  ["austria", "ao", "áo"],
+  ["jordan", "jordan"],
+  ["algeria", "algeria"],
+  ["portugal", "bo dao nha", "bồ đào nha"],
+  ["uzbekistan", "uzbekistan"],
+  ["colombia", "colombia"],
+  ["dr congo", "congo", "congo dr"],
+  ["england", "anh", "tam su", "tam sư"],
+  ["ghana", "ghana"],
+  ["panama", "panama"],
+  ["croatia", "croatia"],
+  ["poland", "ba lan"],
+  ["northern ireland", "bac ireland", "bắc ireland"],
+  ["vietnam", "viet nam", "việt nam"],
+  ["thailand", "thai lan", "thái lan"],
+  ["indonesia", "indonesia"],
+  ["malaysia", "malaysia"],
+  ["singapore", "singapore"]
+];
 
 function normalizeTeamName(s = "") {
   return fold(s)
     .replace(/\bfc\b/g, "")
     .replace(/\bafc\b/g, "")
     .replace(/\bcf\b/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
-
-/* =======================
-   TEAM ALIASES
-======================= */
-
-const TEAM_ALIAS_GROUPS = [
-  ["netherlands", "holland", "ha lan", "hà lan", "loc da cam", "lốc da cam"],
-  ["sweden", "thuy dien", "thụy điển", "thuỵ điển"],
-  ["poland", "ba lan", "ba lan"],
-  ["northern ireland", "bac ireland", "bắc ireland"],
-  ["germany", "duc", "đức"],
-  ["ivory coast", "cote d ivoire", "côte d’ivoire", "bo bien nga", "bờ biển ngà"],
-  ["usa", "united states", "united states of america", "my", "mỹ", "hoa ky", "hoa kỳ"],
-  ["turkey", "turkiye", "türkiye", "tho nhi ky", "thổ nhĩ kỳ"],
-  ["bosnia", "bosnia and herzegovina", "bosnia herzegovina"],
-  ["czech republic", "czechia", "sec", "séc"],
-  ["south korea", "korea republic", "han quoc", "hàn quốc"],
-  ["north korea", "trieu tien", "triều tiên"],
-  ["japan", "nhat ban", "nhật bản"],
-  ["china", "trung quoc", "trung quốc"],
-  ["brazil", "brasil", "braxin"],
-  ["haiti", "haiti"],
-  ["scotland", "scotland", "to cach lan", "tô cách lan"],
-  ["morocco", "ma roc", "ma rốc"],
-  ["argentina", "argentine", "ac hen ti na", "ác hen ti na"],
-  ["spain", "tay ban nha", "tây ban nha"],
-  ["france", "phap", "pháp"],
-  ["italy", "italia"],
-  ["england", "anh", "tam su", "tam sư"],
-  ["portugal", "bo dao nha", "bồ đào nha"],
-  ["belgium", "bi", "bỉ"],
-  ["croatia", "hrvatska", "croatia"],
-  ["morocco", "ma roc", "ma rốc"],
-  ["mexico", "me xi co", "mê xi cô"],
-  ["canada", "ca na da"],
-  ["paraguay", "paraguay"],
-  ["uruguay", "uruguay"],
-  ["colombia", "colombia"],
-  ["australia", "uc", "úc"],
-  ["switzerland", "thuy si", "thụy sĩ", "thuỵ sĩ"],
-  ["austria", "ao", "áo"],
-  ["norway", "na uy"],
-  ["denmark", "dan mach", "đan mạch"],
-  ["finland", "phan lan", "phần lan"],
-  ["ireland", "republic of ireland", "ai len", "ái len"],
-  ["romania", "rumani"],
-  ["serbia", "serbia"],
-  ["slovakia", "slovakia"],
-  ["slovenia", "slovenia"],
-  ["ukraine", "ukraine"],
-  ["russia", "nga"],
-  ["greece", "hy lap", "hy lạp"],
-  ["egypt", "ai cap", "ai cập"],
-  ["senegal", "senegal"],
-  ["ghana", "ghana"],
-  ["nigeria", "nigeria"],
-  ["cameroon", "cameroon"],
-  ["algeria", "algeria"],
-  ["tunisia", "tunisia"],
-  ["qatar", "qatar"],
-  ["saudi arabia", "saudi", "arab saudi"],
-  ["iran", "iran"],
-  ["iraq", "iraq"],
-  ["uae", "united arab emirates"],
-  ["thailand", "thai lan", "thái lan"],
-  ["vietnam", "viet nam", "việt nam"],
-  ["indonesia", "indonesia"],
-  ["malaysia", "malaysia"],
-  ["singapore", "singapore"],
-  ["philippines", "philippines"],
-  ["jamaica", "jamaica"],
-  ["panama", "panama"],
-  ["costa rica", "costa rica"],
-  ["curacao", "curaçao"],
-  ["ecuador", "ecuador"],
-  ["cape verde", "cape verde"],
-  ["new zealand", "tan tay lan", "tân tây lan"]
-];
 
 function aliasSetFor(name = "") {
   const n = normalizeTeamName(name);
@@ -180,8 +170,9 @@ function aliasSetFor(name = "") {
 
   if (n) set.add(n);
 
-  const tokens = n.split(" ").filter(x => x.length >= 3);
-  for (const tok of tokens) set.add(tok);
+  n.split(" ").forEach(tok => {
+    if (tok.length >= 3) set.add(tok);
+  });
 
   for (const group of TEAM_ALIAS_GROUPS) {
     const folded = group.map(x => normalizeTeamName(x)).filter(Boolean);
@@ -191,9 +182,9 @@ function aliasSetFor(name = "") {
       folded.some(x => x.length >= 3 && n.includes(x)) ||
       folded.some(x => x.length >= 3 && x.includes(n))
     ) {
-      for (const a of folded) {
-        if (a.length >= 3) set.add(a);
-      }
+      folded.forEach(x => {
+        if (x.length >= 3) set.add(x);
+      });
     }
   }
 
@@ -204,12 +195,7 @@ function textHasTeam(text = "", team = "") {
   const t = normalizeTeamName(text);
   const aliases = aliasSetFor(team);
 
-  for (const a of aliases) {
-    if (!a) continue;
-    if (t.includes(a)) return true;
-  }
-
-  return false;
+  return aliases.some(a => t.includes(a));
 }
 
 function textHasBothTeams(text = "", home = "", away = "") {
@@ -218,6 +204,7 @@ function textHasBothTeams(text = "", home = "", away = "") {
 
 function hasVsPattern(text = "") {
   const t = fold(text);
+
   return (
     /\bvs\b/.test(t) ||
     /\bv\b/.test(t) ||
@@ -242,28 +229,33 @@ function opponentMismatchInTitle(title = "", home = "", away = "") {
   return false;
 }
 
-/* =======================
+/* =========================
    TRUSTED DOMAINS
-======================= */
+========================= */
 
 const DOMAIN_PROFILE = {
-  "bongdaplus.vn": { type: "expert_main", priority: 1.25, label: "Bongdaplus" },
-  "bongda24h.vn": { type: "expert_main", priority: 1.24, label: "Bongda24h" },
-  "thethao247.vn": { type: "expert_main", priority: 1.2, label: "Thể Thao 247" },
-  "kqbd.mobi": { type: "expert_secondary", priority: 1.08, label: "KQBD.mobi" },
-  "bongdanet.online": { type: "expert_secondary", priority: 1.0, label: "Bongdanet" },
-  "adidas-fifa.com": { type: "method_secondary", priority: 0.78, label: "Adidas-Fifa" }
+  "bongdaplus.vn": { label: "Bongdaplus", priority: 1.25 },
+  "bongda24h.vn": { label: "Bongda24h", priority: 1.24 },
+  "thethao247.vn": { label: "Thể Thao 247", priority: 1.18 },
+  "kqbd.mobi": { label: "KQBD.mobi", priority: 1.1 },
+  "bongdanet.online": { label: "Bongdanet", priority: 1.05 },
+  "adidas-fifa.com": { label: "Adidas-Fifa", priority: 0.78 },
+  "footballwhispers.com": { label: "Football Whispers", priority: 0.92 },
+  "sportsmole.co.uk": { label: "Sports Mole", priority: 0.88 },
+  "whoscored.com": { label: "WhoScored", priority: 0.95 },
+  "rotowire.com": { label: "RotoWire", priority: 0.9 },
+  "forebet.com": { label: "Forebet", priority: 0.85 },
+  "predictz.com": { label: "PredictZ", priority: 0.82 }
 };
 
 const PREFERRED_DOMAINS = Object.keys(DOMAIN_PROFILE);
 
-function domainPriority(url = "") {
-  const d = domainOf(url);
-  return DOMAIN_PROFILE[d]?.priority || 0.62;
-}
-
 function isTrustedDomain(url = "") {
   return Boolean(DOMAIN_PROFILE[domainOf(url)]);
+}
+
+function domainPriority(url = "") {
+  return DOMAIN_PROFILE[domainOf(url)]?.priority || 0.62;
 }
 
 function isKnownCategoryUrl(url = "") {
@@ -274,35 +266,40 @@ function isKnownCategoryUrl(url = "") {
     u.includes("nhan-dinh-bong-da-c344") ||
     u.includes("nhan-dinh-bong-da-c288") ||
     (u.includes("/nhan-dinh-bong-da") && !/\d{4}|vs|\.html/.test(u)) ||
-    (u.includes("/soi-keo-bong-da/") && !/\d{4}|vs|\.html/.test(u)) ||
+    (u.includes("/soi-keo-bong-da") && !/\d{4}|vs|\.html/.test(u)) ||
     (u.includes("/du-doan-bong-da") && !/\d{4}|vs|\.html/.test(u)) ||
     (u.includes("/sieu-may-tinh-du-doan-bong-da") && !/\d{4}|vs|\.html/.test(u))
   );
 }
 
-function isSuperComputerUrl(url = "", text = "") {
-  const u = fold(`${url} ${text}`);
+function isSuperComputerSource(url = "", text = "") {
+  const t = fold(`${url} ${text}`);
 
-  return (
-    u.includes("du-doan-bong-da") ||
-    u.includes("sieu-may-tinh") ||
-    u.includes("siêu máy tính") ||
-    u.includes("supercomputer") ||
-    u.includes("probability") ||
-    u.includes("xác suất") ||
-    u.includes("xac suat")
-  );
+  return containsAny(t, [
+    "supercomputer",
+    "sieu may tinh",
+    "siêu máy tính",
+    "probability",
+    "xác suất",
+    "xac suat",
+    "expected goals",
+    "xg",
+    "monte carlo",
+    "machine learning",
+    "predictz",
+    "forebet"
+  ]);
 }
 
-/* =======================
+/* =========================
    DETECTION
-======================= */
+========================= */
 
 function detectScore(text = "") {
   const t = clean(text);
 
   const patterns = [
-    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan|kết quả|ket qua)[^\d]{0,60}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
+    /(?:prediction|score|scoreline|correct score|tỷ số|ti so|dự đoán|du doan|kết quả|ket qua)[^\d]{0,70}(\d{1,2})\s*[-:]\s*(\d{1,2})/i,
     /(\d{1,2})\s*[-:]\s*(\d{1,2})/
   ];
 
@@ -332,45 +329,24 @@ function scoreToLean(score = "") {
   return "draw";
 }
 
-function hasProbabilityText(text = "") {
-  const t = fold(text);
-
-  return (
-    /\b\d{1,3}\s*%/.test(t) &&
-    containsAny(t, [
-      "xác suất",
-      "xac suat",
-      "probability",
-      "chance",
-      "win probability",
-      "tỷ lệ thắng",
-      "ti le thang"
-    ])
-  );
-}
-
 function detectOU(text = "") {
   const t = fold(text);
 
   let over = 0;
   let under = 0;
 
-  const overWords = [
+  if (containsAny(t, [
     "over", "tai", "tài", "mưa bàn thắng", "mua ban thang", "nhiều bàn", "nhieu ban",
-    "high scoring", "goals expected", "open game", "attacking game",
-    "both teams to score", "btts"
-  ];
+    "high scoring", "goals expected", "open game", "attacking game", "both teams to score", "btts"
+  ])) over += 1;
 
-  const underWords = [
+  if (containsAny(t, [
     "under", "xiu", "xỉu", "it ban", "ít bàn",
     "low scoring", "tight game", "cautious", "defensive", "low block"
-  ];
+  ])) under += 1;
 
-  for (const w of overWords) if (t.includes(fold(w))) over += 1;
-  for (const w of underWords) if (t.includes(fold(w))) under += 1;
-
-  if (over >= under + 1) return "over";
-  if (under >= over + 1) return "under";
+  if (over > under) return "over";
+  if (under > over) return "under";
   return "neutral";
 }
 
@@ -388,36 +364,27 @@ function detectWinner(text = "", home = "", away = "") {
   if (scoreLean === "away") as += 2;
   if (scoreLean === "draw") ds += 2;
 
-  const homeAliases = aliasSetFor(home);
-  const awayAliases = aliasSetFor(away);
-
-  for (const h of homeAliases) {
+  for (const h of aliasSetFor(home)) {
     if (
       t.includes(`${h} thang`) ||
       t.includes(`${h} thắng`) ||
       t.includes(`${h} win`) ||
       t.includes(`${h} to win`) ||
       t.includes(`${h} victory`)
-    ) {
-      hs += 3;
-    }
+    ) hs += 3;
   }
 
-  for (const a of awayAliases) {
+  for (const a of aliasSetFor(away)) {
     if (
       t.includes(`${a} thang`) ||
       t.includes(`${a} thắng`) ||
       t.includes(`${a} win`) ||
       t.includes(`${a} to win`) ||
       t.includes(`${a} victory`)
-    ) {
-      as += 3;
-    }
+    ) as += 3;
   }
 
   if (containsAny(t, ["draw", "hòa", "hoa", "stalemate", "chia điểm", "chia diem"])) ds += 2;
-  if (containsAny(t, ["chủ nhà khó thắng", "chu nha kho thang"])) as += 1;
-  if (containsAny(t, ["khách khó thắng", "khach kho thang"])) hs += 1;
 
   if (textHasTeam(t, home) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao", "cửa trên", "cua tren"])) hs += 1;
   if (textHasTeam(t, away) && containsAny(t, ["favorite", "favourite", "được đánh giá cao", "duoc danh gia cao", "cửa trên", "cua tren"])) as += 1;
@@ -429,8 +396,8 @@ function detectWinner(text = "", home = "", away = "") {
 }
 
 function detectHdc(text = "", home = "", away = "") {
-  const winner = detectWinner(text, home, away);
   const t = fold(text);
+  const winner = detectWinner(text, home, away);
 
   let homeHdc = 0;
   let awayHdc = 0;
@@ -442,16 +409,7 @@ function detectHdc(text = "", home = "", away = "") {
     awayHdc += 0.25;
   }
 
-  if (containsAny(t, ["handicap home", "home handicap", "chủ nhà", "chu nha", "cửa trên", "cua tren", "chấp"])) {
-    if (textHasTeam(t, home)) homeHdc += 1;
-    if (textHasTeam(t, away)) awayHdc += 1;
-  }
-
-  if (containsAny(t, ["handicap away", "away handicap", "đội khách", "doi khach"])) {
-    if (textHasTeam(t, away)) awayHdc += 1;
-  }
-
-  if (containsAny(t, ["cover the spread", "cover handicap", "thắng kèo", "thang keo", "ăn kèo", "an keo"])) {
+  if (containsAny(t, ["cover the spread", "cover handicap", "thắng kèo", "thang keo", "ăn kèo", "an keo", "handicap"])) {
     if (textHasTeam(t, home)) homeHdc += 1;
     if (textHasTeam(t, away)) awayHdc += 1;
   }
@@ -461,34 +419,11 @@ function detectHdc(text = "", home = "", away = "") {
   return "neutral";
 }
 
-function detectSourceType(url = "", text = "") {
-  const blob = `${url} ${text}`;
-
-  if (
-    isSuperComputerUrl(url, text) ||
-    containsAny(blob, [
-      "supercomputer",
-      "sieu may tinh",
-      "siêu máy tính",
-      "probability",
-      "xác suất",
-      "xac suat",
-      "machine learning",
-      "monte carlo"
-    ])
-  ) {
-    return "supercomputer";
-  }
-
-  return "expert";
-}
-
-/* =======================
-   SOURCE QUALITY
-======================= */
+/* =========================
+   SOURCE QUALITY + CONSENSUS
+========================= */
 
 function qualitySource({ title = "", url = "", text = "", manualPriority = false, fromManualTitle = false }, home = "", away = "") {
-  const domain = domainOf(url);
   const all = `${title}. ${url}. ${text}`;
 
   const titleBoth = textHasBothTeams(title, home, away);
@@ -496,24 +431,18 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
   const textBoth = textHasBothTeams(all, home, away);
 
   const matchOk = titleBoth || urlBoth || textBoth;
-  const trusted = isTrustedDomain(url);
-  const isCategory = isKnownCategoryUrl(url) && !titleBoth && !urlBoth;
-  const type = detectSourceType(url, all);
+  const hardReject =
+    opponentMismatchInTitle(title, home, away) ||
+    opponentMismatchInTitle(url, home, away);
 
-  const titleMismatch = opponentMismatchInTitle(title, home, away);
-  const urlMismatch = opponentMismatchInTitle(url, home, away);
-  const hardReject = titleMismatch || urlMismatch;
+  const isCategory = isKnownCategoryUrl(url) && !titleBoth && !urlBoth;
+  const trusted = isTrustedDomain(url);
 
   const score = detectScore(all);
   const ou = detectOU(all);
   const hdc = detectHdc(all, home, away);
   const winner = detectWinner(all, home, away);
-  const hasProb = hasProbabilityText(all);
-
-  const hasHdcText = hdc !== "neutral";
-  const hasOuText = ou !== "neutral";
-  const hasWinnerText = winner !== "neutral";
-  const hasScoreText = Boolean(score);
+  const hasProb = /\d{1,3}\s*%/.test(all) && containsAny(all, ["xác suất", "xac suat", "probability", "chance", "win probability"]);
 
   let q = 0;
   const flags = [];
@@ -525,8 +454,6 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
     if (matchOk) {
       q += 20;
       flags.push("đúng 2 đội");
-    } else {
-      flags.push("không xác minh đủ 2 đội");
     }
 
     if (titleBoth) {
@@ -535,13 +462,13 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
     }
 
     if (urlBoth) {
-      q += 16;
+      q += 14;
       flags.push("url đúng trận");
     }
 
     if (trusted) {
       q += 10;
-      flags.push(`domain ưu tiên: ${DOMAIN_PROFILE[domain]?.label || domain}`);
+      flags.push("domain có độ tin cậy");
     }
 
     if (manualPriority) {
@@ -554,62 +481,22 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
       flags.push("tìm từ tiêu đề bạn dán");
     }
 
-    if (hasScoreText) {
-      q += 12;
-      flags.push("có tỷ số");
-    }
-
-    if (hasProb) {
-      q += 14;
-      flags.push("có xác suất");
-    }
-
-    if (hasOuText) {
-      q += 10;
-      flags.push("có T/X");
-    }
-
-    if (hasHdcText) {
-      q += 10;
-      flags.push("có HDC");
-    }
-
-    if (hasWinnerText) {
-      q += 6;
-      flags.push("có winner");
-    }
-
-    if (type === "supercomputer") {
-      q += 6;
-      flags.push("nguồn siêu máy tính");
-    }
+    if (score) q += 12;
+    if (hasProb) q += 14;
+    if (ou !== "neutral") q += 10;
+    if (hdc !== "neutral") q += 10;
+    if (winner !== "neutral") q += 6;
+    if (isSuperComputerSource(url, all)) q += 6;
 
     if (isCategory) {
       q -= 30;
       flags.push("trang chuyên mục, giảm mạnh");
     }
 
-    if (domain === "tavily") {
-      q -= 24;
-      flags.push("tóm tắt Tavily, không phải bài gốc");
-    }
-
-    if (!matchOk) q = Math.min(q, 18);
-
-    const contentSignals = [hasScoreText, hasProb, hasOuText, hasHdcText, hasWinnerText].filter(Boolean).length;
-
-    if (contentSignals === 0) {
-      q = Math.min(q, manualPriority ? 48 : 34);
-      flags.push("không có tín hiệu kèo rõ");
-    }
+    if (!matchOk) q = Math.min(q, manualPriority ? 42 : 20);
   }
 
   q = clamp(q, 0, 100);
-
-  let qualityLabel = "rejected";
-  if (q >= 72) qualityLabel = "strong";
-  else if (q >= 55) qualityLabel = "medium";
-  else if (q >= 40) qualityLabel = "weak";
 
   const voteAllowed =
     !hardReject &&
@@ -621,30 +508,29 @@ function qualitySource({ title = "", url = "", text = "", manualPriority = false
   const confidence = clamp(0.22 + q / 145, 0.22, 0.84);
   const voteWeight = voteAllowed ? confidence * (q / 100) * priority : 0;
 
-  const displayEligible =
-    !hardReject &&
-    (voteAllowed || q >= 40 || manualPriority);
+  let qualityLabel = "rejected";
+  if (q >= 72) qualityLabel = "strong";
+  else if (q >= 55) qualityLabel = "medium";
+  else if (q >= 40) qualityLabel = "weak";
 
   return {
-    domain,
-    trusted,
-    type,
+    domain: domainOf(url),
     matchOk,
-    titleBoth,
-    urlBoth,
-    isCategory,
     hardReject,
+    isCategory,
+    trusted,
     quality: q,
     qualityLabel,
     voteAllowed,
     voteWeight,
-    displayEligible,
+    confidence,
     flags,
     score,
+    ou,
+    hdc,
+    winner,
     hasProb,
-    hasOuText,
-    hasHdcText,
-    hasWinnerText
+    displayEligible: !hardReject && (voteAllowed || q >= 40 || manualPriority)
   };
 }
 
@@ -657,18 +543,11 @@ function parseExpertSource({ title = "", url = "", text = "", type = "auto", man
   const ouLean = q.voteAllowed ? detectOU(blob) : "neutral";
   const score = q.voteAllowed ? detectScore(blob) : "";
 
-  const note = [];
-
-  if (winnerLean !== "neutral") note.push(`Winner lean: ${winnerLean}`);
-  if (hdcLean !== "neutral") note.push(`HDC lean: ${hdcLean}`);
-  if (ouLean !== "neutral") note.push(`OU lean: ${ouLean}`);
-  if (score) note.push(`Score: ${score}`);
-
   return {
     title: clean(title) || url,
     url,
     domain: q.domain,
-    type: q.type || type,
+    type: isSuperComputerSource(url, blob) ? "supercomputer" : type,
     manualPriority,
     fromManualTitle,
     quality: q.quality,
@@ -686,7 +565,7 @@ function parseExpertSource({ title = "", url = "", text = "", type = "auto", man
     score,
     hasProbability: q.hasProb,
     confidence: q.confidence,
-    note: note.join(" · ") || "Nguồn có liên quan nhưng chưa đủ chuẩn để vote mạnh.",
+    note: `Winner ${winnerLean}; HDC ${hdcLean}; OU ${ouLean}; score ${score || "none"}`,
     snippet: blob.slice(0, 900)
   };
 }
@@ -749,6 +628,7 @@ function commonScores(items = []) {
 
   for (const s of items) {
     if (!s.score) continue;
+
     const w = clamp(s.voteWeight || 0, 0.1, 2);
     map[s.score] = (map[s.score] || 0) + w;
   }
@@ -757,25 +637,6 @@ function commonScores(items = []) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(x => x[0]);
-}
-
-function sortSourcesForDisplay(all = []) {
-  return [...all]
-    .filter(s => s && s.displayEligible)
-    .sort((a, b) => {
-      const aScore =
-        (a.manualPriority ? 1000 : 0) +
-        (a.voteAllowed ? 500 : 0) +
-        (a.quality || 0);
-
-      const bScore =
-        (b.manualPriority ? 1000 : 0) +
-        (b.voteAllowed ? 500 : 0) +
-        (b.quality || 0);
-
-      return bScore - aScore;
-    })
-    .slice(0, 14);
 }
 
 function buildConsensus(items = [], home = "", away = "") {
@@ -830,7 +691,15 @@ function buildConsensus(items = [], home = "", away = "") {
 
   const hardRejected = all.filter(s => s.hardReject).length;
   const weakIgnored = all.filter(s => !s.voteAllowed).length;
-  const displaySources = sortSourcesForDisplay(all);
+
+  const displaySources = [...all]
+    .filter(s => s.displayEligible)
+    .sort((a, b) => {
+      const ap = (a.manualPriority ? 1000 : 0) + (a.voteAllowed ? 500 : 0) + (a.quality || 0);
+      const bp = (b.manualPriority ? 1000 : 0) + (b.voteAllowed ? 500 : 0) + (b.quality || 0);
+      return bp - ap;
+    })
+    .slice(0, 14);
 
   const summaryParts = [];
 
@@ -851,14 +720,13 @@ function buildConsensus(items = [], home = "", away = "") {
     summaryParts.push(`T/X nghiêng ${ou.lean === "over" ? "Tài" : "Xỉu"}`);
   }
 
-  if (scores.length) {
-    summaryParts.push(`tỷ số hay gặp: ${scores.join(", ")}`);
-  }
+  if (scores.length) summaryParts.push(`tỷ số hay gặp: ${scores.join(", ")}`);
 
   return {
     status: voting.length ? "ok" : "weak_or_no_sources",
     safeMode: true,
     sourcePriorityGate: true,
+    sourceSplitVoting: true,
     sourceCount: voting.length,
     readSourceCount: all.length,
     displayedSourceCount: displaySources.length,
@@ -875,7 +743,7 @@ function buildConsensus(items = [], home = "", away = "") {
     mediumCount,
     superComputerSourceCount: superCount,
     commonScores: scores,
-    summary: `Source Priority Gate V4.3.1: ${summaryParts.join("; ")}. ${hardRejected ? `Đã loại ${hardRejected} nguồn sai cặp.` : ""} ${weakIgnored ? `Bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
+    summary: `Expert Gate V4.4: ${summaryParts.join("; ")}. ${hardRejected ? `Đã loại ${hardRejected} nguồn sai cặp.` : ""} ${weakIgnored ? `Bỏ qua ${weakIgnored} nguồn yếu/trang chuyên mục.` : ""}`.trim(),
     votes: {
       winner: winner.score,
       hdc: hdc.score,
@@ -887,12 +755,16 @@ function buildConsensus(items = [], home = "", away = "") {
   };
 }
 
-/* =======================
-   TAVILY + FETCH SAFE
-======================= */
+function emptyConsensus() {
+  return buildConsensus([], "", "");
+}
+
+/* =========================
+   TAVILY + PAGE FETCH
+========================= */
 
 async function tavilySearch(query, maxResults = 6) {
-  const key = process.env.TAVILY_API_KEY;
+  const key = getTavilyKey();
 
   if (!key) {
     return { answer: "", results: [], error: "Thiếu TAVILY_API_KEY" };
@@ -973,31 +845,31 @@ async function fetchPageText(url) {
         .replace(/&#8211;/g, "-")
         .replace(/&#8217;/g, "'")
         .replace(/&quot;/g, '"')
-    ).slice(0, 16000);
+    ).slice(0, 18000);
   } catch {
     return "";
   }
 }
 
-/* =======================
-   EXPERT SEARCH SAFE
-======================= */
+/* =========================
+   EXPERT / SUPERCOMPUTER SEARCH
+========================= */
 
 async function autoExpertSearch(home, away, league, date, manualMode = false) {
   const preferredQueries = [
-    ...PREFERRED_DOMAINS.map(site => `site:${site} ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`),
+    ...PREFERRED_DOMAINS.slice(0, 8).map(site => `site:${site} ${home} ${away} nhận định soi kèo dự đoán tỷ số tài xỉu handicap`),
     `site:kqbd.mobi/du-doan-bong-da ${home} ${away} dự đoán bóng đá xác suất tỷ số`,
     `site:bongdanet.online/sieu-may-tinh-du-doan-bong-da ${home} ${away} siêu máy tính dự đoán bóng đá`
   ];
 
   const openQueries = [
     `${home} vs ${away} ${league} ${date} prediction preview betting tips correct score over under handicap`,
-    `${home} vs ${away} supercomputer prediction probability score`
+    `${home} vs ${away} supercomputer prediction probability score expected goals`
   ];
 
   const queries = manualMode
-    ? preferredQueries
-    : [...preferredQueries, ...openQueries];
+    ? preferredQueries.slice(0, 8)
+    : [...preferredQueries.slice(0, 8), ...openQueries];
 
   const packs = await Promise.allSettled(
     queries.map(q => safeTavilySearch(q, manualMode ? 4 : 5))
@@ -1008,6 +880,7 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
 
   for (const p of packs) {
     if (p.status !== "fulfilled") continue;
+
     if (p.value.answer && !manualMode) answers.push(p.value.answer);
     results.push(...(p.value.results || []));
   }
@@ -1020,7 +893,7 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
       if (isTrustedDomain(r.url)) boost += 1.8;
       if (textHasBothTeams(blob, home, away)) boost += 2.2;
       if (opponentMismatchInTitle(r.title, home, away) || opponentMismatchInTitle(r.url, home, away)) boost -= 99;
-      if (isSuperComputerUrl(r.url, blob)) boost += 0.8;
+      if (isSuperComputerSource(r.url, blob)) boost += 0.8;
       if (containsAny(blob, ["soi kèo", "soi keo", "nhận định", "nhan dinh", "prediction", "preview"])) boost += 0.7;
       if (isKnownCategoryUrl(r.url)) boost -= 1.2;
 
@@ -1031,9 +904,7 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
     .sort((a, b) => (b.localBoost + clamp(b.score, 0, 99)) - (a.localBoost + clamp(a.score, 0, 99)))
     .slice(0, manualMode ? 8 : 12);
 
-  const pageTexts = await Promise.all(
-    deduped.map(r => fetchPageText(r.url))
-  );
+  const pageTexts = await Promise.all(deduped.map(r => fetchPageText(r.url)));
 
   const sources = deduped.map((r, i) => parseExpertSource({
     title: r.title,
@@ -1060,8 +931,8 @@ async function autoExpertSearch(home, away, league, date, manualMode = false) {
   return {
     ...consensus,
     whitelist: PREFERRED_DOMAINS,
-    methodologySource: "Source Priority Gate V4.3.1",
-    rawAnswer: answers.join(" ").slice(0, 1500)
+    methodologySource: "Source Split Voting V4.4",
+    rawAnswer: answers.join(" ").slice(0, 1600)
   };
 }
 
@@ -1070,20 +941,9 @@ async function safeAutoExpertSearch(home, away, league, date, manualMode = false
     return await autoExpertSearch(home, away, league, date, manualMode);
   } catch (e) {
     return {
+      ...buildConsensus([], home, away),
       status: "auto_failed",
-      sourcePriorityGate: true,
-      sourceCount: 0,
-      readSourceCount: 0,
-      weakIgnored: 0,
-      hardRejected: 0,
-      winnerLean: "neutral",
-      hdcLean: "neutral",
-      ouLean: "neutral",
-      confidence: 0,
-      commonScores: [],
       summary: `Auto expert lỗi nhưng API không sập: ${e.message || "unknown"}`,
-      sources: [],
-      votingSources: [],
       rawAnswer: ""
     };
   }
@@ -1107,19 +967,18 @@ async function parseManualInputs(lines = [], type, home, away) {
 
   const titleSearches = await Promise.allSettled(
     titleQueries.map(async q => {
-      const searchQuery = `"${q}" ${home} ${away}`;
-      const pack = await safeTavilySearch(searchQuery, 3);
+      const pack = await safeTavilySearch(`"${q}" ${home} ${away}`, 3);
 
       const results = uniqByUrl(pack.results || [])
         .filter(r => !opponentMismatchInTitle(r.title, home, away))
         .slice(0, 2);
 
-      const pageTexts = await Promise.all(results.map(r => fetchPageText(r.url)));
+      const texts = await Promise.all(results.map(r => fetchPageText(r.url)));
 
       const parsed = results.map((r, i) => parseExpertSource({
         title: r.title || q,
         url: r.url,
-        text: pageTexts[i] || r.snippet || q,
+        text: texts[i] || r.snippet || q,
         type,
         manualPriority: true,
         fromManualTitle: true
@@ -1157,165 +1016,370 @@ async function safeParseManualInputs(lines = [], type, home, away) {
   }
 }
 
-/* =======================
-   LINEUP WEB FALLBACK
-======================= */
+/* =========================
+   CONTEXT / MARKET SPLIT
+========================= */
 
-function looksLikeRealLineup(chunk = "") {
-  const text = clean(chunk);
-
-  if (!text || text.length < 80) return false;
-
-  const lowerText = fold(text);
-
-  const onlyHeading =
-    text.length < 180 &&
-    containsAny(lowerText, [
-      "predicted lineup and team news",
-      "lineups & injury news",
-      "starting xis",
-      "lineups widget",
-      "team news"
-    ]) &&
-    !text.includes(",") &&
-    !text.includes(";");
-
-  if (onlyHeading) return false;
-
-  const commaCount = (text.match(/,/g) || []).length;
-  const semicolonCount = (text.match(/;/g) || []).length;
-  const hasFormation = /\b[3-5]-[2-5]-[1-4]\b/.test(text);
-
-  const hasPositionWords = containsAny(lowerText, [
-    "gk", "goalkeeper", "defenders", "midfielders", "forwards",
-    "df:", "mf:", "fw:",
-    "thu mon", "hau ve", "tien ve", "tien dao"
-  ]);
-
-  const nameMatches = text.match(/\b[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\s+[A-ZÀ-Ỵ][a-zà-ỹ'’-]{2,}\b/g) || [];
-  const nameCount = new Set(nameMatches).size;
-
-  if (commaCount >= 5 && nameCount >= 4) return true;
-  if (semicolonCount >= 4 && nameCount >= 4) return true;
-  if (hasFormation && nameCount >= 5) return true;
-  if (hasPositionWords && nameCount >= 5) return true;
-
-  return false;
-}
-
-function cleanLineupChunk(chunk = "") {
-  return clean(chunk)
-    .replace(/Predicted Lineups\s*&\s*Starting XIs/gi, "")
-    .replace(/Lineups\s*&\s*Injury News/gi, "")
-    .replace(/RotoWire Soccer Lineups Widget/gi, "")
-    .replace(/###/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 900);
-}
-
-function webLineupFallback(home, away, sourceText, consensus) {
-  const blob = clean([
-    sourceText || "",
-    consensus?.rawAnswer || "",
-    consensus?.summary || "",
-    ...(consensus?.sources || []).map(s => `${s.title || ""}. ${s.snippet || ""}`)
-  ].join(" "));
-
-  const text = blob.slice(0, 24000);
-
-  function findLineupForTeam(team) {
-    const teamRaw = clean(team);
-    const teamEsc = escapeRegExp(teamRaw);
-
-    const lineupWords = [
-      "predicted lineup",
-      "expected lineup",
-      "starting xi",
-      "starting xis",
-      "probable lineup",
-      "lineup",
-      "đội hình dự kiến",
-      "doi hinh du kien",
-      "đội hình ra sân",
-      "doi hinh ra san"
-    ];
-
-    const patterns = [
-      new RegExp(`${teamEsc}[^.]{0,180}(${lineupWords.join("|")})[^.]{0,1400}`, "i"),
-      new RegExp(`(${lineupWords.join("|")})[^.]{0,220}${teamEsc}[^.]{0,1400}`, "i"),
-      new RegExp(`${teamEsc}[^\\n]{0,1600}`, "i")
-    ];
-
-    for (const p of patterns) {
-      const m = text.match(p);
-      if (!m || !m[0]) continue;
-
-      const chunk = cleanLineupChunk(m[0]);
-
-      if (looksLikeRealLineup(chunk)) {
-        return chunk;
-      }
-    }
-
-    return "";
-  }
-
-  function findInjuryForTeam(team) {
-    const teamRaw = clean(team);
-    const teamEsc = escapeRegExp(teamRaw);
-
-    const injuryWords = [
-      "injury",
-      "injuries",
-      "suspended",
-      "suspension",
-      "doubtful",
-      "out injured",
-      "chấn thương",
-      "chan thuong",
-      "treo giò",
-      "treo gio",
-      "vắng mặt",
-      "vang mat"
-    ];
-
-    const patterns = [
-      new RegExp(`${teamEsc}[^.]{0,220}(${injuryWords.join("|")})[^.]{0,1200}`, "i"),
-      new RegExp(`(${injuryWords.join("|")})[^.]{0,260}${teamEsc}[^.]{0,1200}`, "i")
-    ];
-
-    for (const p of patterns) {
-      const m = text.match(p);
-
-      if (m && m[0]) {
-        const chunk = cleanLineupChunk(m[0]);
-
-        if (chunk.length > 120) {
-          return chunk.slice(0, 900);
-        }
-      }
-    }
-
-    return "";
-  }
-
+function emptyImpact() {
   return {
-    lineupHomeWeb: findLineupForTeam(home),
-    lineupAwayWeb: findLineupForTeam(away),
-    injuriesHomeWeb: findInjuryForTeam(home),
-    injuriesAwayWeb: findInjuryForTeam(away)
+    status: "none",
+    confidence: 0,
+    summary: "Chưa có dữ liệu.",
+    score: {
+      homeHdc: 0,
+      awayHdc: 0,
+      over: 0,
+      under: 0
+    },
+    notes: [],
+    sources: []
   };
 }
 
-/* =======================
-   API-FOOTBALL SAFE
-======================= */
+async function readTypedLinks(lines = [], type = "context", home = "", away = "") {
+  const inputs = lines.map(clean).filter(Boolean).slice(0, 12);
+  const urls = inputs.filter(isUrl);
+  const titles = inputs.filter(x => !isUrl(x));
+
+  const out = [];
+
+  const urlTexts = await Promise.all(urls.map(u => fetchPageText(u)));
+
+  urls.forEach((url, i) => {
+    out.push({
+      title: url,
+      url,
+      type,
+      text: urlTexts[i] || "",
+      manualPriority: true
+    });
+  });
+
+  const titleSearches = await Promise.allSettled(
+    titles.map(async q => {
+      const pack = await safeTavilySearch(`"${q}" ${home} ${away}`, 3);
+
+      const results = uniqByUrl(pack.results || [])
+        .filter(r => !opponentMismatchInTitle(r.title, home, away))
+        .slice(0, 2);
+
+      const texts = await Promise.all(results.map(r => fetchPageText(r.url)));
+
+      if (!results.length) {
+        return [{
+          title: q,
+          url: `manual-title://${encodeURIComponent(q)}`,
+          type,
+          text: q,
+          manualPriority: true
+        }];
+      }
+
+      return results.map((r, i) => ({
+        title: r.title || q,
+        url: r.url,
+        type,
+        text: texts[i] || r.snippet || q,
+        manualPriority: true
+      }));
+    })
+  );
+
+  for (const r of titleSearches) {
+    if (r.status === "fulfilled") out.push(...r.value);
+  }
+
+  return out;
+}
+
+async function safeReadTypedLinks(lines = [], type = "context", home = "", away = "") {
+  try {
+    return await readTypedLinks(lines, type, home, away);
+  } catch {
+    return [];
+  }
+}
+
+function buildContextImpact(sources = [], home = "", away = "") {
+  if (!sources.length) return emptyImpact();
+
+  const score = { homeHdc: 0, awayHdc: 0, over: 0, under: 0 };
+  const notes = [];
+  const used = [];
+
+  function add(key, val, note) {
+    score[key] += val;
+    notes.push(note);
+  }
+
+  for (const src of sources) {
+    const title = src.title || "";
+    const text = clean(`${src.title || ""}. ${src.url || ""}. ${src.text || ""}`);
+    const t = fold(text);
+
+    const hasHome = textHasTeam(text, home);
+    const hasAway = textHasTeam(text, away);
+    const both = hasHome && hasAway;
+
+    if (!both && !src.manualPriority) continue;
+
+    let localHit = false;
+
+    const issueWords = [
+      "injury", "injuries", "injured", "suspended", "doubtful", "out injured",
+      "chấn thương", "chan thuong", "treo giò", "treo gio",
+      "vắng", "vang", "xoay tua", "rotation", "rest", "dưỡng sức", "duong suc"
+    ];
+
+    const defensiveIssue =
+      containsAny(t, ["trung vệ", "centre back", "center back", "defender", "hậu vệ", "hau ve", "goalkeeper", "thủ môn", "thu mon"]) &&
+      containsAny(t, issueWords);
+
+    const attackingIssue =
+      containsAny(t, ["striker", "forward", "winger", "tiền đạo", "tien dao", "chân sút", "chan sut"]) &&
+      containsAny(t, issueWords);
+
+    const homeIssue = hasHome && containsAny(t, issueWords);
+    const awayIssue = hasAway && containsAny(t, issueWords);
+
+    if (homeIssue) {
+      add("awayHdc", 1.2, `${home} có vấn đề lực lượng/bối cảnh`);
+      add("homeHdc", -1.0, `${home} bị trừ vì lực lượng/bối cảnh`);
+      localHit = true;
+    }
+
+    if (awayIssue) {
+      add("homeHdc", 1.2, `${away} có vấn đề lực lượng/bối cảnh`);
+      add("awayHdc", -1.0, `${away} bị trừ vì lực lượng/bối cảnh`);
+      localHit = true;
+    }
+
+    if (defensiveIssue) {
+      add("over", 0.6, "Có dấu hiệu hàng thủ/thủ môn sứt mẻ, tăng nhẹ Tài");
+      localHit = true;
+    }
+
+    if (attackingIssue) {
+      add("under", 0.45, "Có dấu hiệu hàng công vắng người, tăng nhẹ Xỉu");
+      add("over", -0.35, "Hàng công thiếu người, giảm nhẹ Tài");
+      localHit = true;
+    }
+
+    if (containsAny(t, ["đội nhà cần thắng", "home need win", "home must win", "motivation home", "must win for home"])) {
+      add("homeHdc", 0.9, "Động lực đội nhà tốt");
+      add("over", 0.25, "Đội nhà cần thắng, tăng nhẹ nhịp trận");
+      localHit = true;
+    }
+
+    if (containsAny(t, ["đội khách cần thắng", "away need win", "away must win", "motivation away", "must win for away"])) {
+      add("awayHdc", 0.9, "Động lực đội khách tốt");
+      add("over", 0.25, "Đội khách cần thắng, tăng nhẹ nhịp trận");
+      localHit = true;
+    }
+
+    if (containsAny(t, ["mưa lớn", "mua lon", "heavy rain", "sân xấu", "san xau", "bad pitch", "low block", "defensive", "tight game", "thận trọng", "than trong", "cautious"])) {
+      add("under", 1.2, "Bối cảnh nghiêng nhịp chậm/Xỉu");
+      add("over", -1.0, "Bối cảnh cản Tài");
+      localHit = true;
+    }
+
+    if (containsAny(t, ["open game", "attacking", "pressing", "nhiều bàn", "nhieu ban", "mưa bàn thắng", "mua ban thang", "both teams to score", "btts"])) {
+      add("over", 1.2, "Bối cảnh nghiêng trận mở/Tài");
+      add("under", -1.0, "Bối cảnh cản Xỉu");
+      localHit = true;
+    }
+
+    if (containsAny(t, ["schedule congestion", "fixture congestion", "lịch dày", "lich day", "fatigue", "mệt mỏi", "met moi"])) {
+      if (hasHome) {
+        add("awayHdc", 0.45, `${home} có dấu hiệu lịch dày/mệt`);
+        add("homeHdc", -0.35, `${home} lịch dày, giảm HDC`);
+      }
+      if (hasAway) {
+        add("homeHdc", 0.45, `${away} có dấu hiệu lịch dày/mệt`);
+        add("awayHdc", -0.35, `${away} lịch dày, giảm HDC`);
+      }
+      add("under", 0.25, "Lịch dày có thể giảm nhịp trận");
+      localHit = true;
+    }
+
+    if (localHit) {
+      used.push({
+        title,
+        url: src.url,
+        type: "context",
+        snippet: text.slice(0, 900)
+      });
+    }
+  }
+
+  const totalAbs = Object.values(score).reduce((a, b) => a + Math.abs(b), 0);
+  const confidence = clamp(totalAbs / 8, 0, 0.75);
+
+  let summary = "Lực lượng/bối cảnh chưa có hướng rõ.";
+  const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
+
+  if (best && best[1] > 0.4) {
+    const label = {
+      homeHdc: `ủng hộ ${home} HDC`,
+      awayHdc: `ủng hộ ${away} HDC`,
+      over: "ủng hộ Tài",
+      under: "ủng hộ Xỉu"
+    }[best[0]];
+
+    summary = `Lực lượng/bối cảnh ${label}.`;
+  }
+
+  return {
+    status: used.length ? "ok" : "weak",
+    confidence,
+    summary,
+    score: {
+      homeHdc: clamp(score.homeHdc, -3, 3),
+      awayHdc: clamp(score.awayHdc, -3, 3),
+      over: clamp(score.over, -3, 3),
+      under: clamp(score.under, -3, 3)
+    },
+    notes: [...new Set(notes)].slice(0, 10),
+    sources: used.slice(0, 10)
+  };
+}
+
+function buildMarketImpact(sources = [], home = "", away = "") {
+  if (!sources.length) return emptyImpact();
+
+  const score = { homeHdc: 0, awayHdc: 0, over: 0, under: 0 };
+  const notes = [];
+  const used = [];
+
+  function add(key, val, note) {
+    score[key] += val;
+    notes.push(note);
+  }
+
+  for (const src of sources) {
+    const title = src.title || "";
+    const text = clean(`${src.title || ""}. ${src.url || ""}. ${src.text || ""}`);
+    const t = fold(text);
+
+    let localHit = false;
+
+    const homeMention = textHasTeam(text, home);
+    const awayMention = textHasTeam(text, away);
+
+    if (containsAny(t, [
+      "over odds drop", "odds over drop", "odds tài giảm", "tai odds giam",
+      "tài bị đè", "tai bi de", "over backed", "steam over",
+      "money on over", "sharp over"
+    ])) {
+      add("over", 1.4, "Thị trường/odds ủng hộ Tài");
+      add("under", -1.0, "Thị trường/odds cản Xỉu");
+      localHit = true;
+    }
+
+    if (containsAny(t, [
+      "under odds drop", "odds under drop", "odds xỉu giảm", "xiu odds giam",
+      "xỉu bị đè", "xiu bi de", "under backed", "steam under",
+      "money on under", "sharp under"
+    ])) {
+      add("under", 1.4, "Thị trường/odds ủng hộ Xỉu");
+      add("over", -1.0, "Thị trường/odds cản Tài");
+      localHit = true;
+    }
+
+    if (containsAny(t, [
+      "line moved up", "total moved up", "tài xỉu tăng", "tai xiu tang",
+      "mốc tăng", "moc tang", "total line rises", "total rises"
+    ])) {
+      add("over", 1.0, "Mốc T/X tăng, thị trường nghiêng Tài");
+      localHit = true;
+    }
+
+    if (containsAny(t, [
+      "line moved down", "total moved down", "tài xỉu giảm", "tai xiu giam",
+      "mốc giảm", "moc giam", "total line drops", "total drops"
+    ])) {
+      add("under", 1.0, "Mốc T/X giảm, thị trường nghiêng Xỉu");
+      localHit = true;
+    }
+
+    if (homeMention && containsAny(t, [
+      "odds drop", "price shortened", "backed", "steam", "bị đè", "bi de",
+      "odds giảm", "odds giam", "market support", "money on"
+    ])) {
+      add("homeHdc", 1.2, `Thị trường đè ${home}`);
+      add("awayHdc", -0.8, `Thị trường không ủng hộ ${away}`);
+      localHit = true;
+    }
+
+    if (awayMention && containsAny(t, [
+      "odds drop", "price shortened", "backed", "steam", "bị đè", "bi de",
+      "odds giảm", "odds giam", "market support", "money on"
+    ])) {
+      add("awayHdc", 1.2, `Thị trường đè ${away}`);
+      add("homeHdc", -0.8, `Thị trường không ủng hộ ${home}`);
+      localHit = true;
+    }
+
+    if (containsAny(t, [
+      "trap", "bẫy", "bay", "public money", "sharp money",
+      "reverse line movement", "rlm", "fake move", "kèo dụ", "keo du"
+    ])) {
+      add("homeHdc", -0.4, "Có dấu hiệu trap/reverse line, giảm nhẹ HDC");
+      add("awayHdc", -0.4, "Có dấu hiệu trap/reverse line, giảm nhẹ HDC");
+      add("over", -0.3, "Có dấu hiệu trap/reverse line, giảm nhẹ T/X");
+      add("under", -0.3, "Có dấu hiệu trap/reverse line, giảm nhẹ T/X");
+      localHit = true;
+    }
+
+    if (localHit) {
+      used.push({
+        title,
+        url: src.url,
+        type: "market",
+        snippet: text.slice(0, 900)
+      });
+    }
+  }
+
+  const totalAbs = Object.values(score).reduce((a, b) => a + Math.abs(b), 0);
+  const confidence = clamp(totalAbs / 8, 0, 0.75);
+
+  let summary = "Odds thị trường chưa có hướng rõ.";
+  const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
+
+  if (best && best[1] > 0.4) {
+    const label = {
+      homeHdc: `ủng hộ ${home} HDC`,
+      awayHdc: `ủng hộ ${away} HDC`,
+      over: "ủng hộ Tài",
+      under: "ủng hộ Xỉu"
+    }[best[0]];
+
+    summary = `Odds thị trường ${label}.`;
+  }
+
+  return {
+    status: used.length ? "ok" : "weak",
+    confidence,
+    summary,
+    score: {
+      homeHdc: clamp(score.homeHdc, -3, 3),
+      awayHdc: clamp(score.awayHdc, -3, 3),
+      over: clamp(score.over, -3, 3),
+      under: clamp(score.under, -3, 3)
+    },
+    notes: [...new Set(notes)].slice(0, 10),
+    sources: used.slice(0, 10)
+  };
+}
+
+/* =========================
+   API FOOTBALL
+========================= */
 
 async function apiFootball(path) {
   try {
-    const key = process.env.API_FOOTBALL_KEY;
-
+    const key = getFootballKey();
     if (!key) return null;
 
     const res = await fetch(`https://v3.football.api-sports.io${path}`, {
@@ -1331,8 +1395,8 @@ async function apiFootball(path) {
 }
 
 function teamSearchCandidates(name = "") {
-  const aliases = aliasSetFor(name);
   const raw = clean(name);
+  const aliases = aliasSetFor(name);
 
   return [...new Set([raw, ...aliases])]
     .map(clean)
@@ -1376,6 +1440,7 @@ async function findFixture(home, away, date = "") {
   for (const f of rows) {
     const id = f?.fixture?.id;
     if (!id || seen.has(id)) continue;
+
     seen.add(id);
     deduped.push(f);
   }
@@ -1399,10 +1464,9 @@ async function findFixture(home, away, date = "") {
 }
 
 async function footballStructured(home, away, date = "") {
-  if (!process.env.API_FOOTBALL_KEY) return null;
+  if (!getFootballKey()) return null;
 
   const fixture = await findFixture(home, away, date);
-
   if (!fixture?.fixture?.id) return null;
 
   const fixtureId = fixture.fixture.id;
@@ -1452,25 +1516,134 @@ async function safeFootballStructured(home, away, date = "") {
   }
 }
 
-/* =======================
-   CONTEXT SCORING
-======================= */
+/* =========================
+   LINEUP WEB FALLBACK
+========================= */
+
+function looksLikeRealLineup(chunk = "") {
+  const text = clean(chunk);
+  if (!text || text.length < 80) return false;
+
+  const commaCount = (text.match(/,/g) || []).length;
+  const semicolonCount = (text.match(/;/g) || []).length;
+  const hasFormation = /\b[3-5]-[2-5]-[1-4]\b/.test(text);
+
+  const hasPositionWords = containsAny(text, [
+    "gk", "goalkeeper", "defenders", "midfielders", "forwards",
+    "df:", "mf:", "fw:", "thủ môn", "thu mon", "hậu vệ", "hau ve",
+    "tiền vệ", "tien ve", "tiền đạo", "tien dao"
+  ]);
+
+  const nameMatches = text.match(/\b[A-Z][a-z'’-]{2,}\s+[A-Z][a-z'’-]{2,}\b/g) || [];
+  const nameCount = new Set(nameMatches).size;
+
+  if (commaCount >= 5 && nameCount >= 4) return true;
+  if (semicolonCount >= 4 && nameCount >= 4) return true;
+  if (hasFormation && nameCount >= 5) return true;
+  if (hasPositionWords && nameCount >= 5) return true;
+
+  return false;
+}
+
+function cleanLineupChunk(chunk = "") {
+  return clean(chunk)
+    .replace(/Predicted Lineups\s*&\s*Starting XIs/gi, "")
+    .replace(/Lineups\s*&\s*Injury News/gi, "")
+    .replace(/RotoWire Soccer Lineups Widget/gi, "")
+    .replace(/###/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1000);
+}
+
+function webLineupFallback(home, away, sourceText = "") {
+  const text = clean(sourceText).slice(0, 30000);
+
+  function findLineupForTeam(team) {
+    const aliases = aliasSetFor(team).slice(0, 4);
+    const lineupWords = [
+      "predicted lineup",
+      "expected lineup",
+      "starting xi",
+      "probable lineup",
+      "lineup",
+      "đội hình dự kiến",
+      "doi hinh du kien",
+      "đội hình ra sân",
+      "doi hinh ra san"
+    ];
+
+    for (const a of aliases) {
+      for (const w of lineupWords) {
+        const idx1 = fold(text).indexOf(`${a}`);
+        const idx2 = fold(text).indexOf(fold(w));
+
+        if (idx1 >= 0 && idx2 >= 0 && Math.abs(idx1 - idx2) < 1800) {
+          const start = Math.max(0, Math.min(idx1, idx2) - 200);
+          const chunk = cleanLineupChunk(text.slice(start, start + 2200));
+
+          if (looksLikeRealLineup(chunk)) return chunk;
+        }
+      }
+    }
+
+    return "";
+  }
+
+  function findInjuryForTeam(team) {
+    const aliases = aliasSetFor(team).slice(0, 4);
+    const injuryWords = [
+      "injury", "injuries", "suspended", "suspension", "doubtful", "out injured",
+      "chấn thương", "chan thuong", "treo giò", "treo gio", "vắng mặt", "vang mat"
+    ];
+
+    for (const a of aliases) {
+      for (const w of injuryWords) {
+        const idx1 = fold(text).indexOf(a);
+        const idx2 = fold(text).indexOf(fold(w));
+
+        if (idx1 >= 0 && idx2 >= 0 && Math.abs(idx1 - idx2) < 1800) {
+          const start = Math.max(0, Math.min(idx1, idx2) - 200);
+          const chunk = cleanLineupChunk(text.slice(start, start + 1800));
+
+          if (chunk.length > 120) return chunk;
+        }
+      }
+    }
+
+    return "";
+  }
+
+  return {
+    lineupHomeWeb: findLineupForTeam(home),
+    lineupAwayWeb: findLineupForTeam(away),
+    injuriesHomeWeb: findInjuryForTeam(home),
+    injuriesAwayWeb: findInjuryForTeam(away)
+  };
+}
+
+/* =========================
+   CONTEXT SCORING FROM TEXT
+========================= */
 
 function scoreContextFromText(text = "") {
   let tempo = 0;
   let homeIssues = 0;
   let awayIssues = 0;
 
-  if (containsAny(text, ["defensive", "low block", "cautious", "low scoring", "under", "tight game", "phòng ngự", "thận trọng", "ít bàn", "xỉu"])) {
+  if (containsAny(text, [
+    "defensive", "low block", "cautious", "low scoring", "under", "tight game",
+    "phòng ngự", "thận trọng", "ít bàn", "xỉu"
+  ])) {
     tempo -= 1;
   }
 
-  if (containsAny(text, ["attacking", "open game", "high scoring", "over", "pressing", "tấn công", "cởi mở", "nhiều bàn", "tài", "mưa bàn thắng"])) {
+  if (containsAny(text, [
+    "attacking", "open game", "high scoring", "over", "pressing",
+    "tấn công", "cởi mở", "nhiều bàn", "tài", "mưa bàn thắng"
+  ])) {
     tempo += 1;
   }
-
-  if (containsAny(text, ["home injury", "home injuries", "home suspended"])) homeIssues += 0.5;
-  if (containsAny(text, ["away injury", "away injuries", "away suspended"])) awayIssues += 0.5;
 
   if (containsAny(text, ["injury", "injured", "suspended", "doubtful", "chấn thương", "treo giò", "vắng mặt"])) {
     homeIssues += 0.25;
@@ -1484,20 +1657,27 @@ function scoreContextFromText(text = "") {
   };
 }
 
-/* =======================
+/* =========================
    ROUTES
-======================= */
+========================= */
 
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    name: "Soi Kèo AI Research API V4.3.1 Safe POST",
+    name: "Soi Kèo AI Research API V4.4 Source Split Voting",
     endpoint: "/api/research",
-    tavily: Boolean(process.env.TAVILY_API_KEY),
-    apiFootball: Boolean(process.env.API_FOOTBALL_KEY),
+    tavily: Boolean(getTavilyKey()),
+    apiFootball: Boolean(getFootballKey()),
     safeExpertConsensus: true,
     sourcePriorityGate: true,
-    safePost: true
+    sourceSplitVoting: true,
+    safePost: true,
+    accepts: [
+      "expertLinks",
+      "superComputerLinks",
+      "lineupContextLinks",
+      "marketOddsLinks"
+    ]
   });
 });
 
@@ -1514,43 +1694,47 @@ app.post("/api/research", async (req, res) => {
 
     const expertLinks = Array.isArray(req.body.expertLinks) ? req.body.expertLinks : [];
     const superComputerLinks = Array.isArray(req.body.superComputerLinks) ? req.body.superComputerLinks : [];
+    const lineupContextLinks = Array.isArray(req.body.lineupContextLinks) ? req.body.lineupContextLinks : [];
+    const marketOddsLinks = Array.isArray(req.body.marketOddsLinks) ? req.body.marketOddsLinks : [];
 
-    const manualInputs = [...expertLinks, ...superComputerLinks].map(clean).filter(Boolean);
-    const manualMode = manualInputs.length > 0;
+    const allManualInputs = [
+      ...expertLinks,
+      ...superComputerLinks,
+      ...lineupContextLinks,
+      ...marketOddsLinks
+    ].map(clean).filter(Boolean);
 
+    const manualMode = allManualInputs.length > 0;
     const autoExpertEnabled = req.body.autoExpertSearch !== false;
 
-    const teamNewsQuery = `${home} vs ${away} ${league} ${date} predicted lineups injuries suspensions team news preview tactical style`;
+    const teamNewsQuery =
+      `${home} vs ${away} ${league} ${date} predicted lineups injuries suspensions team news preview tactical style`;
 
     const [
       webInfo,
       structured,
       autoConsensus,
       manualExpertSources,
-      manualSuperSources
+      manualSuperSources,
+      contextSources,
+      marketSources
     ] = await Promise.all([
       safeTavilySearch(teamNewsQuery, 6),
       safeFootballStructured(home, away, date),
       autoExpertEnabled
         ? safeAutoExpertSearch(home, away, league, date, manualMode)
         : Promise.resolve({
+            ...buildConsensus([], home, away),
             status: "off",
-            sourceCount: 0,
-            readSourceCount: 0,
-            weakIgnored: 0,
-            hardRejected: 0,
-            winnerLean: "neutral",
-            hdcLean: "neutral",
-            ouLean: "neutral",
-            confidence: 0,
-            commonScores: [],
             summary: "Tự tìm chuyên gia đang tắt.",
             sources: [],
             votingSources: [],
             rawAnswer: ""
           }),
       safeParseManualInputs(expertLinks, "expert_manual", home, away),
-      safeParseManualInputs(superComputerLinks, "supercomputer_manual", home, away)
+      safeParseManualInputs(superComputerLinks, "supercomputer_manual", home, away),
+      safeReadTypedLinks(lineupContextLinks, "context", home, away),
+      safeReadTypedLinks(marketOddsLinks, "market", home, away)
     ]);
 
     const manualSources = [
@@ -1567,19 +1751,28 @@ app.post("/api/research", async (req, res) => {
 
     combinedConsensus.rawAnswer = autoConsensus.rawAnswer || "";
     combinedConsensus.whitelist = PREFERRED_DOMAINS;
-    combinedConsensus.methodologySource = "Source Priority Gate V4.3.1";
+    combinedConsensus.methodologySource = "Source Split Voting V4.4";
     combinedConsensus.manualSourceCount = manualSources.length;
     combinedConsensus.autoExpertEnabled = autoExpertEnabled;
     combinedConsensus.manualMode = manualMode;
+
+    const contextImpact = buildContextImpact(contextSources || [], home, away);
+    const marketImpact = buildMarketImpact(marketSources || [], home, away);
 
     const sourceText = [
       webInfo.answer,
       ...(webInfo.results || []).map(r => `${r.title}. ${r.snippet}`),
       combinedConsensus.summary,
-      ...(combinedConsensus.sources || []).map(s => `${s.title}. ${s.snippet}`)
+      contextImpact.summary,
+      marketImpact.summary,
+      ...(combinedConsensus.sources || []).map(s => `${s.title}. ${s.snippet || s.note || ""}`),
+      ...(contextImpact.sources || []).map(s => `${s.title}. ${s.snippet || ""}`),
+      ...(marketImpact.sources || []).map(s => `${s.title}. ${s.snippet || ""}`),
+      ...(contextSources || []).map(s => `${s.title}. ${s.text || ""}`),
+      ...(marketSources || []).map(s => `${s.title}. ${s.text || ""}`)
     ].join(" ");
 
-    const webFallback = webLineupFallback(home, away, sourceText, combinedConsensus);
+    const webFallback = webLineupFallback(home, away, sourceText);
     const auto = scoreContextFromText(sourceText);
 
     let injuriesHome = webFallback.injuriesHomeWeb
@@ -1622,20 +1815,25 @@ app.post("/api/research", async (req, res) => {
 
     const summary = [
       webInfo.answer || `Đã tìm nhanh team news cho ${home} vs ${away}.`,
-      combinedConsensus.summary || ""
+      combinedConsensus.summary || "",
+      contextImpact.summary || "",
+      marketImpact.summary || ""
     ].filter(Boolean).join(" ");
 
     const flags = {
       lowBlock:
         combinedConsensus.ouLean === "under" ||
+        contextImpact.score.under > contextImpact.score.over ||
         containsAny(sourceText, ["low block", "defensive", "tight game", "xỉu", "ít bàn"]),
 
       earlyGoalRisk:
         combinedConsensus.ouLean === "over" ||
+        contextImpact.score.over > contextImpact.score.under ||
+        marketImpact.score.over > marketImpact.score.under ||
         containsAny(sourceText, ["open game", "attacking", "high scoring", "tài", "nhiều bàn", "mưa bàn thắng"]),
 
       rotation:
-        containsAny(sourceText, ["rotation", "rotate", "xoay tua", "rest players", "giữ chân"]),
+        containsAny(sourceText, ["rotation", "rotate", "xoay tua", "rest players", "giữ chân", "dưỡng sức"]),
 
       homeMotivation:
         containsAny(sourceText, [`${home} need win`, `${home} must win`, "home motivation", "đội nhà cần thắng"]),
@@ -1645,6 +1843,7 @@ app.post("/api/research", async (req, res) => {
     };
 
     res.json({
+      apiVersion: "V4.4 Source Split Voting",
       summary,
       homeAdvantage: 1,
       tempo: auto.tempo,
@@ -1661,15 +1860,21 @@ app.post("/api/research", async (req, res) => {
         ...combinedConsensus,
         safeMode: true,
         sourcePriorityGate: true,
+        sourceSplitVoting: true,
         safePost: true
       },
+      contextImpact,
+      marketImpact,
       sources: [
         ...(webInfo.results || []),
-        ...((combinedConsensus.sources || []).filter(s => s.url && !String(s.url).startsWith("tavily://")))
-      ].slice(0, 14)
+        ...((combinedConsensus.sources || []).filter(s => s.url && !String(s.url).startsWith("tavily://"))),
+        ...(contextImpact.sources || []),
+        ...(marketImpact.sources || [])
+      ].slice(0, 18)
     });
   } catch (err) {
     res.status(200).json({
+      apiVersion: "V4.4 Source Split Voting",
       summary: "API gặp lỗi nội bộ nhưng đã trả fallback an toàn, app không bị sập.",
       homeAdvantage: 1,
       tempo: 0,
@@ -1686,6 +1891,7 @@ app.post("/api/research", async (req, res) => {
         status: "server_safe_fallback",
         safeMode: true,
         sourcePriorityGate: true,
+        sourceSplitVoting: true,
         safePost: true,
         sourceCount: 0,
         readSourceCount: 0,
@@ -1700,11 +1906,13 @@ app.post("/api/research", async (req, res) => {
         sources: [],
         votingSources: []
       },
+      contextImpact: emptyImpact(),
+      marketImpact: emptyImpact(),
       sources: []
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Soi Kèo AI Research API V4.3.1 chạy tại http://localhost:${PORT}`);
+  console.log(`Soi Kèo AI Research API V4.4 chạy tại http://localhost:${PORT}`);
 });
