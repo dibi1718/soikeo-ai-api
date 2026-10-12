@@ -1,4 +1,4 @@
-// SOI FULL AI + AiScore MASTER V8 — API-Football Research Backend
+// SOI FULL AI + AiScore MASTER V8.1 — API-Football Research Backend + safe diagnostics
 // Node.js >=18, package.json: {"type":"module","scripts":{"start":"node server.js"},
 // "dependencies":{"express":"^4.18.2","cors":"^2.8.5","dotenv":"^16.4.5"}}
 // Never place API keys in GitHub. Set APISPORTS_KEY (or API_FOOTBALL_KEY) on Render.
@@ -264,7 +264,42 @@ async function research(x){
  return result;
 }
 app.get('/',(_,res)=>res.json({ok:true,service:'SOI FULL AI MASTER V8',endpoint:'/api/research',app:'/app',apiFootballConfigured:!!KEY,tavilyConfigured:!!TAVILY,remainingReported:upstreamRemaining,note:'No verified MASTER score without full rubric; PASS'}));
-app.get('/health',(_,res)=>res.json({ok:true,version:8,keyConfigured:!!KEY,callsToday:calls,remainingReported:upstreamRemaining}));
+// V8.1: Chẩn đoán riêng API-Football. KHÔNG trả API KEY, email, dữ liệu tài khoản.
+app.get('/api/diagnostic-football',token,throttle,async(req,res)=>{
+ if(!KEY)return res.status(503).json({diagnostic:'CONFIG_MISSING',keyConfigured:false,action:'Thêm APISPORTS_KEY trong Render Environment.'});
+ const ctr=new AbortController();const timer=setTimeout(()=>ctr.abort(),12000);
+ try{
+  const isFixtures=req.query.check==='fixtures';
+  const vnDate=new Date(Date.now()+7*3600000).toISOString().slice(0,10);
+  const checkPath=isFixtures?'/fixtures?date='+vnDate+'&timezone=Asia%2FHo_Chi_Minh':'/status';
+  const upstream=await fetch(BASE+checkPath,{
+   method:'GET',headers:{'x-apisports-key':KEY,'accept':'application/json'},
+   cache:'no-store',redirect:'manual',signal:ctr.signal
+  });
+  const contentType=upstream.headers.get('content-type')||'';
+  let body='';try{body=await upstream.text();}catch{}
+  let parsed=null;try{parsed=JSON.parse(body);}catch{}
+  const issues=parsed?.errors;
+  const safeErrors=Array.isArray(issues)?issues.slice(0,5).map(x=>clean(x,150)):
+   (issues&&typeof issues==='object'?Object.fromEntries(Object.entries(issues).slice(0,5).map(([k,v])=>[clean(k,50),clean(v,150)])):null);
+  const result={diagnostic:'API_FOOTBALL_STATUS',checkedEndpoint:checkPath,keyConfigured:true,
+   upstreamStatus:upstream.status,upstreamOK:upstream.ok,
+   responseType:/json/i.test(contentType)?'JSON':/html/i.test(contentType)?'HTML':'OTHER',
+   serverHeader:clean(upstream.headers.get('server')||'NO DATA',60),
+   cfRay:clean(upstream.headers.get('cf-ray')||'NO DATA',60),
+   apiErrors:safeErrors,apiResponsePresent:!!parsed?.response,
+   remaining:upstream.headers.get('x-ratelimit-requests-remaining')||'NO DATA',
+   diagnosis:upstream.ok?'Kết nối API-Football từ Render hoạt động.':
+    (upstream.status===403&&/html/i.test(contentType)?'HTTP 403 HTML: có thể bị chặn tại lớp bảo vệ trước API; cần gửi mã CF Ray cho hỗ trợ nhà cung cấp.':
+    upstream.status===403?'HTTP 403 JSON/OTHER: xem apiErrors để tìm nguyên nhân chính xác.':
+    'Yêu cầu bị từ chối; xem HTTP status và apiErrors.')};
+  console.log('[API_FOOTBALL_DIAGNOSTIC]',JSON.stringify(result));
+  res.json(result);
+ }catch(e){const result={diagnostic:'NETWORK_ERROR',keyConfigured:true,error:clean(e.message,160)};
+  console.warn('[API_FOOTBALL_DIAGNOSTIC]',JSON.stringify(result));res.status(502).json(result);
+ }finally{clearTimeout(timer);}
+});
+app.get('/health',(_,res)=>res.json({ok:true,version:'8.1-diagnostic',keyConfigured:!!KEY,callsToday:calls,remainingReported:upstreamRemaining}));
 app.post('/api/research',token,throttle,async(req,res)=>{try{
  const x=getInput(req.body||{});
  if(x.mode!=='FT')return res.status(422).json({error:'H2/LIVE requires separate markets and models; not auto-scored in V8.'});
